@@ -1,0 +1,27 @@
+{
+"hooks": {
+  "Stop": [
+    {
+      "hooks": [
+        {
+          "type": "command",
+          "command": "~/.claude/hooks/question_detector_hook.sh"
+        }
+      ]
+    }
+  ]
+},
+"env": {
+  "CLAUDE_CODE_ENABLE_TELEMETRY": "0"
+},
+"attribution": {
+  "commit": "",
+  "pr": ""
+},
+"statusLine": {
+  "type": "command",
+  "command": "~/.claude/statusline.sh",
+  "padding": 0
+},
+"cleanupPeriodDays": 99999999
+}

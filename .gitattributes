@@ -1,0 +1,6 @@
+* text=auto eol=lf
+
+# Exclude from exporting
+.gitkeep export-ignore
+.gitignore export-ignore
+.gitattributes export-ignore

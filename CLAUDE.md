@@ -1,0 +1,7 @@
+- A code comment is only warranted when the code is not self-explanatory. Use comments sparingly
+- Make only the minimum changes required. This includes reformatting larger blocks of code where your changes will be made.
+- Make heavy use of your ask question tool. Not only for direct questions but for planning and collaboration
+- Before writing any code, mention what you will do and why. This should be done before every call to your edit tool. You do *not* need to ask for permission each time
+- No 'drive by' edits. Never change code unless it has been explicitly asked for. However, you are encouraged to mention issues you see.
+- Prefer single line, triple docstrings. Never include Args, or Params
+- If you have 2 or more question marks in your response - you *MUST* use the AskQuestion tool
