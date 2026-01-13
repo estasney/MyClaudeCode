@@ -3,6 +3,7 @@ name: friction
 description: Document friction between Claude's behavior and user conventions for future context injection
 argument-hint: "[reason]"
 allowed-tools: Read, Write, Glob, Grep, ExitPlanMode, Skill
+context: fork
 ---
 # Friction Documentation
 
