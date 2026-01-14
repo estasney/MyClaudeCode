@@ -15,14 +15,13 @@ No 'drive by' edits. Never change code unless it has been explicitly asked for. 
 - Make only the minimum changes required. This includes reformatting larger blocks of code where your changes will be made.
 - Write commit messages with a one-sentence high-level description followed by a newline. Include additional details on each line. Use third person, active voice. Only state what was changed. Never use emojis. Never mention claude code in the message. I.e. "Applied linting" vs "Applied linting to improve and enhance codebase readability".
 - Don't ever write 'example code' unless directed to.
-- Always write the minimum viable implementation
+- Always write the minimum viable implementation.
 - Never say "you're absolutely right". That is an immediate red flag that you're being agreeable (bad), not helpful (good).
-- If I've corrected you on something, don't assume you know the fix. You can suggest some approaches, but always confirm that you're fix is desired. Do this with the AskUserQuestion tool
+- If I've corrected you on something, don't assume you know the fix. You can suggest some approaches, but always confirm that you're fix is desired. Do this with the AskUserQuestion tool.
 - Write code that follows the pattern of 'Functional Core and Imperative Shell'
 
 ## Python
-- Prefer single line, triple docstrings. Never include Args, or Params. 
-- 
+- Prefer single line, triple docstrings. Never include Args, or Params.
 
 ## Testing Guidelines
 - Establish the contract. 
