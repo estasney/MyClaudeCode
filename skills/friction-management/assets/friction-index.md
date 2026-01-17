@@ -19,3 +19,7 @@ Tag-based index mapping tags to friction point files. Updated automatically as f
 **SQLAlchemy**: `python/sqlalchemy.md` - Tags: python, sqlalchemy, api, deprecation, result-methods
 
 **Typing**: `python/typing.md` - Tags: python, typing, pep585
+
+**NumPy**: `python/numpy.md` - Tags: python, numpy, performance, vectorization
+
+**Pydantic Settings**: `python/pydantic-settings.md` - Tags: python, pydantic, configuration, design, computed-field, models, inference, decomposition
