@@ -1,70 +1,5 @@
 # Deployment
 
-## Example
-
-For async code use this pattern to expose the engine via a pydantic model or settings model
-```python
-from pathlib import Path
-import asyncio
-from collections.abc import Awaitable, Callable
-from sqlalchemy import AsyncEngine, create_async_engine, event
-from pydantic import BaseModel, ConfigDict, Field
-
-# Import the Base ORM
-
-class TaggingSettings(BaseModel):
-    model_config = ConfigDict(arbitrary_types_allowed=True)
-    context_size: int = 60000
-    data_file: Path = Field(
-        default=Path(
-            "~/Documents/LLMDataset/openai/conversation_export.jsonl"
-        ).expanduser()
-    )
-    db_uri: str = Field(
-        default="sqlite+aiosqlite:///...."
-    )
-
-
-    _engine: AsyncEngine | None = None
-    _init_lock: asyncio.Lock | None = None
-    _init_task: asyncio.Task[AsyncEngine] | None = None
-
-    def _install_sqlite_pragmas(self, engine: AsyncEngine) -> None:
-        is_sqlite = engine.sync_engine.dialect.name == "sqlite"
-
-        @event.listens_for(engine.sync_engine, "connect")
-        def _on_connect(dbapi_connection, connection_record) -> None:  # noqa: ANN001
-            if not is_sqlite:
-                return
-            dbapi_connection.run_async(lambda c: c.execute("PRAGMA foreign_keys = ON;"))
-            dbapi_connection.run_async(lambda c: c.execute("PRAGMA journal_mode = WAL;"))
-
-    async def _init_engine(self) -> AsyncEngine:
-        if self._engine is None:
-            self._engine = create_async_engine(self.db_uri, future=True)
-            self._install_sqlite_pragmas(self._engine)
-        async with self._engine.begin() as conn:
-            await conn.run_sync(Base.metadata.create_all)
-        return self._engine
-
-    @property
-    def db_engine(self) -> Callable[[], Awaitable[AsyncEngine]]:
-        async def factory() -> AsyncEngine:
-            if self._engine is not None and self._init_task is None:
-                return self._engine
-            if self._init_lock is None:
-                self._init_lock = asyncio.Lock()
-            async with self._init_lock:
-                if self._init_task is None:
-                    self._init_task = asyncio.create_task(self._init_engine())
-                task = self._init_task
-            return await task
-
-        return factory
-```
-
-Callers will use `await settings.db_engine()` to get the initialized engine.
-
 ## Connection Pooling
 
 The `Engine` manages a pool of reusable database connections. This is automatic, but you can configure pool size:
@@ -144,6 +79,70 @@ def set_sqlite_pragma(dbapi_conn, connection_record):
 Common pragmas:
 - `PRAGMA foreign_keys=ON`: Enable foreign key constraints (disabled by default in SQLite).
 - `PRAGMA journal_mode=WAL`: Use write-ahead logging for better concurrent read performance.
+- `PRAGMA synchronous=NORMAL`: Reduce sync overhead (trades durability for speed).
+
+## Production Configuration
+
+For production PostgreSQL:
+
+```python
+from sqlalchemy import create_engine, event
+
+engine = create_engine(
+    "postgresql+psycopg2://user:pass@localhost/dbname",
+    pool_size=10,
+    max_overflow=20,
+    pool_recycle=3600,
+    pool_pre_ping=True,
+    echo=False,  # Disable SQL logging in production
+)
+```
+
+For MySQL/MariaDB (note the pool_recycle):
+
+```python
+engine = create_engine(
+    "mysql+pymysql://user:pass@localhost/dbname",
+    pool_size=10,
+    max_overflow=20,
+    pool_recycle=28800,  # 8 hours (MySQL default is 8 hours)
+    pool_pre_ping=True,
+)
+```
+
+## Async Deployment
+
+For async in production, use PostgreSQL with asyncpg:
+
+```python
+from sqlalchemy.ext.asyncio import create_async_engine
+
+engine = create_async_engine(
+    "postgresql+asyncpg://user:pass@localhost/dbname",
+    pool_size=10,
+    max_overflow=20,
+)
+```
+
+For SQLite with async (testing only, not production):
+
+```python
+from sqlalchemy.ext.asyncio import create_async_engine
+from sqlalchemy.pool import StaticPool
+
+engine = create_async_engine(
+    "sqlite+aiosqlite:///app.db",
+    poolclass=StaticPool,
+)
+
+@event.listens_for(engine.sync_engine, "connect")
+def set_sqlite_pragma(dbapi_conn, connection_record):
+    cursor = dbapi_conn.cursor()
+    cursor.execute("PRAGMA foreign_keys=ON")
+    cursor.close()
+```
+
+**Why aiosqlite is slow:** SQLite is inherently synchronous. aiosqlite runs blocking calls in a thread pool, which is slower than native async drivers like asyncpg for PostgreSQL.
 
 ## Monitoring and Debugging
 
@@ -171,11 +170,3 @@ print(f"Checked out: {pool.checkedout()}")
 ```
 
 This is useful for debugging connection leaks or pool exhaustion.
-
-You can see the compiled version of a query for debugging:
-
-```python
-from sqlalchemy import select, text
-q = text("SELECT * FROM users WHERE id = :id").bindparams(id=1)
-print(stmt.compile(compile_kwargs={"literal_binds": True}))
-```

@@ -109,10 +109,6 @@ class SerializedDateTime(TypeDecorator):
             data = json.loads(value)
             return datetime.fromisoformat(data["iso"])
         return None
-
-    def process_literal_value(self, value, dialect):
-        # In practice this is only required to support the literal_binds compile option
-        
 ```
 
 The `cache_ok = True` flag tells SQLAlchemy this type's behavior is stable and can be cached. Omit it (or set to `False`) if the type's behavior depends on constructor arguments.
@@ -153,9 +149,6 @@ class Status(PyEnum):
     ACTIVE = "active"
     INACTIVE = "inactive"
     PENDING = "pending"
-    
-    def __str__(self):
-        return str.__str__(self)
 
 class User(Base):
     __tablename__ = "users"
@@ -165,3 +158,31 @@ class User(Base):
 ```
 
 SQLAlchemy stores the enum value in the database and returns Python enum instances.
+
+## ARRAY Type (PostgreSQL)
+
+For PostgreSQL arrays:
+
+```python
+from sqlalchemy import ARRAY, Integer
+
+class Data(Base):
+    __tablename__ = "data"
+    
+    id: Mapped[int] = mapped_column(primary_key=True)
+    numbers: Mapped[list[int]] = mapped_column(ARRAY(Integer))
+```
+
+Assign Python lists:
+
+```python
+data = Data(numbers=[1, 2, 3, 4, 5])
+session.add(data)
+session.commit()
+```
+
+Query array elements (PostgreSQL-specific):
+
+```python
+stmt = select(Data).where(Data.numbers.contains([3]))
+```

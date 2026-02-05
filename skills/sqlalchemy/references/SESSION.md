@@ -26,8 +26,22 @@ def get_db():
         db.close()
 ```
 
-In other code, it is typical to access the sessionmaker from a settings object
+In FastAPI:
 
+```python
+from fastapi import Depends
+
+def get_db():
+    db = SessionLocal()
+    try:
+        yield db
+    finally:
+        db.close()
+
+@app.get("/users/")
+def list_users(db: Session = Depends(get_db)):
+    return db.execute(select(User)).scalars().all()
+```
 
 ## Thread Safety
 
@@ -144,4 +158,11 @@ For SQLite with async, use the `aiosqlite` driver:
 ```python
 # pip install aiosqlite
 async_engine = create_async_engine("sqlite+aiosqlite:///app.db")
+```
+
+SQLite with aiosqlite is slow under async load. For production async, use PostgreSQL with `asyncpg`:
+
+```python
+# pip install asyncpg
+async_engine = create_async_engine("postgresql+asyncpg://user:pass@localhost/dbname")
 ```

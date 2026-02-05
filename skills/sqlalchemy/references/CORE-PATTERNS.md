@@ -19,8 +19,8 @@ min_age = 18
 stmt = text(f"SELECT * FROM users WHERE age > {min_age}")
 
 # CORRECT
-stmt = text("SELECT * FROM users WHERE age > :min_age").bindparams(min_age=min_age)
-result = session.execute(stmt)
+stmt = text("SELECT * FROM users WHERE age > :min_age")
+result = session.execute(stmt, {"min_age": 18})
 ```
 
 Even for what feels like "simple" values, always use parameters. SQLAlchemy's expression language handles parameterization automatically, but `text()` requires manual parameter specification.
@@ -30,24 +30,25 @@ Even for what feels like "simple" values, always use parameters. SQLAlchemy's ex
 Bind parameters are placeholders for values. The `:name` syntax is for scalar values:
 
 ```python
-stmt = text("SELECT * FROM users WHERE id = :user_id").bindparams(user_id=42)
-result = session.execute(stmt)
+stmt = text("SELECT * FROM users WHERE id = :user_id")
+result = session.execute(stmt, {"user_id": 42})
 ```
 
 For lists or sets, use the `expanding` parameter. This expands a single parameter into multiple placeholders:
 
 ```python
-from sqlalchemy import bindparam
+from sqlalchemy import literal_column
 
 stmt = text("SELECT * FROM users WHERE id IN :ids").bindparams(
-    bindparam("ids", expanding=True, value=[1, 2, 3, 4, 5])
+    expanding=True,
+    ids=[1, 2, 3, 4, 5]
 )
 result = session.execute(stmt)
 ```
 
 This generates `WHERE id IN (?, ?, ?, ?, ?)` with the values bound properly.
 
-Or with SQLAlchemy's expression language:
+Or with SQLAlchemy's expression language (preferred):
 
 ```python
 from sqlalchemy import select
@@ -56,10 +57,9 @@ stmt = select(User).where(User.id.in_([1, 2, 3, 4, 5]))
 result = session.execute(stmt)
 ```
 
-## Table vs table vs ORM Table
+## Table vs Table
 
-`Table` is a Core construct that represents a database table without ORM mapping
-but with shared metadata.
+`Table` is a Core construct that represents a database table without ORM mapping:
 
 ```python
 from sqlalchemy import Table, MetaData, Column, Integer, String
@@ -81,9 +81,6 @@ Use `Table` directly when:
 - You need dynamic table construction
 
 For ORM, the model class (e.g., `class User(Base)`) implicitly creates and manages a `Table` object. Access it via `User.__table__` if you need the underlying Core table.
-
-`table` (lowercase) is a lightweight construct for ad-hoc queries without full table definitions. It's less common and mainly used for quick scripts or testing. It does not require metadata.
-
 
 Querying a Core Table:
 
@@ -129,6 +126,18 @@ stmt = stmt.on_conflict_do_update(
 )
 session.execute(stmt)
 session.commit()
+```
+
+For PostgreSQL, use `on_conflict_do_update()` with `index_elements` or `constraint`:
+
+```python
+from sqlalchemy.dialects.postgresql import insert as pg_insert
+
+stmt = pg_insert(users_table).values(id=1, name="Alice")
+stmt = stmt.on_conflict_do_update(
+    index_elements=["id"],
+    set_={"name": "Alice Updated"}
+)
 ```
 
 For ignoring conflicts (don't update, just skip):
