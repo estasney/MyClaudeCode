@@ -1,7 +1,13 @@
 ---
 name: friction-management
 description: Process and organize friction points into a curated library organized by domain and tags
-allowed-tools: Read, Write, Glob, Grep, Edit
+allowed-tools:
+   - Read(./*)
+   - Write(./*)
+   - Glob(./*)
+   - Grep(./*)
+   - Edit(./*)
+   - Bash(./*)
 model: inherit
 ---
 
@@ -16,6 +22,7 @@ When given a friction documentation file (from `/friction` command):
 1. **Extract Friction Points**
    - Read the plan file containing friction bullets
    - Each bullet has: description + tags in [brackets]
+   - See [Domain File Format](references/domain-file-format.md) for guidance
 
 2. **Categorize by Domain**
    - Use tags to determine domain (python, javascript, formatting, etc.)
