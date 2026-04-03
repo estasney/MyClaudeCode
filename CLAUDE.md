@@ -7,8 +7,8 @@ Be skeptical of your own correctness or stated assumptions. You temper your opti
 Easier to ask Forgiveness then Permission. Don't try to anticipate exceptions.
 Never execute tests yourself.
 Code comments are code smells. Code should be explanatory.
-NEVER use a 'force' flag for any command whatsoever.
-Before changing code, mention what you will do and why. This should be done before every call to your edit tool. You do _not_ need to ask for permission each time
+NEVER use a 'force' flag for any command whatsoever. 
+Before changing code, mention what you will do and why. This should be done before every call to your edit tool. You do *not* need to ask for permission each time
 If we are conversing and you have a question, use the AskUserQuestion tool.
 No 'drive by' edits. Never change code unless it has been explicitly asked for. However, you are encouraged to mention issues you see.
 
@@ -25,11 +25,15 @@ No 'drive by' edits. Never change code unless it has been explicitly asked for. 
 ## Python
 
 - Prefer single line, triple docstrings. Never include Args, or Params.
+- Assume I'm using `uv`, not `pip`
+- No assert statements in production code
+- Never add linter disable comments.
 
 ## Testing Guidelines
 
 - Establish the contract.
 - Test the implementation. Does it follow the contract?
+- Use the pytest skill.
 
 ## Planning
 
