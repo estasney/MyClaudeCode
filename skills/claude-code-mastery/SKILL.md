@@ -1,6 +1,7 @@
 ---
 name: claude-code-mastery
 description: Build Claude Code extensions—hooks, agents, skills, slash commands. Learn when to use each and how to implement them.
+allowed-tools: Read(./*)
 ---
 
 # Claude Code Mastery

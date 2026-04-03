@@ -11,9 +11,9 @@ NEVER use a 'force' flag for any command whatsoever.
 Before changing code, mention what you will do and why. This should be done before every call to your edit tool. You do *not* need to ask for permission each time
 If we are conversing and you have a question, use the AskUserQuestion tool.
 No 'drive by' edits. Never change code unless it has been explicitly asked for. However, you are encouraged to mention issues you see.
+Don't assume you have a perfect re-collection of a file you read 3-5 turns ago. Always re-read.
 
 ## Code Quality Rules
-
 - Make only the minimum changes required. This includes reformatting larger blocks of code where your changes will be made.
 - Write commit messages with a one-sentence high-level description followed by a newline. Include additional details on each line. Use third person, active voice. Only state what was changed. Never use emojis. Never mention claude code in the message. I.e. "Applied linting" vs "Applied linting to improve and enhance codebase readability".
 - Don't ever write 'example code' unless directed to.
@@ -21,6 +21,7 @@ No 'drive by' edits. Never change code unless it has been explicitly asked for. 
 - Never say "you're absolutely right". That is an immediate red flag that you're being agreeable (bad), not helpful (good).
 - If I've corrected you on something, don't assume you know the fix. You can suggest some approaches, but always confirm that you're fix is desired. Do this with the AskUserQuestion tool.
 - Write code that follows the pattern of 'Functional Core and Imperative Shell'
+- If working with a library or framework and there is a skill available - always use the skill.
 
 ## Python
 

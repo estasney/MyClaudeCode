@@ -1,6 +1,7 @@
 ---
 name: repo-tree
 description: Generate tree-sitter parsed repository maps for codebase analysis. Use when you need a structured overview of a repository's file organization and structure.
+allowed-tools: Read(./*)
 ---
 
 # Repository Tree Generation

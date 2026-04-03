@@ -1,6 +1,7 @@
 ---
 name: sqlalchemy
 description: Guide for working with SQLAlchemy ORM and Core. Use when working with SQLAlchemy constructs including model definitions, querying, transactions, custom types, async patterns, session management, and connection pooling. Covers best practices for version 2.0+.
+allowed-tools: Read(./*)
 ---
 
 # SQLAlchemy
@@ -11,7 +12,7 @@ This skill provides guidance for working with SQLAlchemy ORM and Core constructs
 
 SQLAlchemy has two primary interfaces. The **ORM** uses Python classes to represent database tables, where each class instance represents a row. The **Core** interface uses an expression language to construct SQL statements directly without class mapping. Identifying which you're using matters because their patterns differ significantly.
 
-Check for these signals: ORM uses `declarative_base()`, `Column`, `relationship`. Core uses `select()`, `insert()`, `text()`, `Table`, `Table.c.<column>`.
+Check for these signals: ORM uses `declarative_base()`, `Column`, or `mapped_column`, `relationship`. Core uses `select()`, `insert()`, `text()`, `Table`, `Table.c.<column>`.
 
 ## Core Concepts
 
@@ -66,10 +67,6 @@ Go to [TYPES.md](references/TYPES.md). This explains TypeAdapters and how to bui
 **Building for production or async?**
 
 Go to [SESSION.md](references/SESSION.md) for SessionMaker and thread safety. Go to [DEPLOYMENT.md](references/DEPLOYMENT.md) for connection pooling, SQLite threading, and async SQLAlchemy patterns.
-
-**Need a model attribute that resolves a foreign key to a human-readable value without persisting it as a real column?**
-
-This comes up when you want instances to carry resolved lookup values (e.g., a type name instead of a type ID) for serialization or schema migration, but the identity tables may differ across environments. Go to [VIRTUAL-COLUMNS.md](references/VIRTUAL-COLUMNS.md). Covers `query_expression` with nullable defaults, `hybrid_property`, `text()` subqueries, and how to distinguish virtual attributes from true columns at runtime.
 
 **Debugging query issues?**
 

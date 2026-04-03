@@ -137,6 +137,57 @@ class EncryptedString(TypeDecorator):
         pass
 ```
 
+Another example integrating with pydantic:
+
+```python
+
+class DumpKwargs(TypedDict, total=False):
+    """Kwargs for TypeAdapter.dump_python and dump_json methods."""
+
+    mode: Literal["json", "python"]
+    include: set[int | str] | dict[int | str, Any] | None
+    exclude: set[int | str] | dict[int | str, Any] | None
+    context: dict[str, Any] | None
+    by_alias: bool
+    exclude_unset: bool
+    exclude_defaults: bool
+    exclude_none: bool
+    round_trip: bool
+    warnings: bool | Literal["none", "warn", "error"]
+    serialize_as_any: bool
+
+
+class JSONSQLAdapter[T](TypeDecorator):
+    """SQLAlchemy type decorator using TypeAdapter and serde json"""
+
+    impl = JSON
+    cache_ok = True
+    adapter: TypeAdapter[T]
+    dump_kwargs: DumpKwargs
+
+    def __init__(self, py_type: Any = None, **dump_kwargs: Unpack[DumpKwargs]) -> None:
+        super().__init__()
+        self.py_type = py_type
+        self.adapter = TypeAdapter(py_type)
+        self.dump_kwargs = dump_kwargs or DumpKwargs(mode="json")
+
+    def process_bind_param(self, value: T | None, dialect: Any) -> str | None:
+        if value is None:
+            return None
+        return self.adapter.dump_python(value, **self.dump_kwargs)
+
+    def process_result_value(self, value: str | None, dialect: Any) -> T | None:
+        if value is None:
+            return None
+        return self.adapter.validate_python(value)
+
+    def process_literal_param(self, value: T | None, dialect: "Dialect") -> str:
+        if value is None:
+            return "NULL"
+        return self.impl.literal_processor(dialect)(self.adapter.dump_json(value))
+
+```
+
 ## Enum Type
 
 For enum columns:

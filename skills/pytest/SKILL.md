@@ -1,6 +1,7 @@
 ---
 name: pytest
 description: Comprehensive pytest testing patterns covering fixtures, dependency injection, parametrization, mocking, and contract testing. Use when writing Python tests, debugging test failures, refactoring test suites, or implementing test patterns like fixture factories, indirect parametrization, or pytest-mock integration.
+allowed-tools: Read(./*)
 ---
 
 # Pytest Testing Patterns
