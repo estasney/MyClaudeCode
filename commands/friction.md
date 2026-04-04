@@ -1,8 +1,8 @@
 ---
 name: friction
 description: Document friction between Claude's behavior and user conventions for future context injection
-argument-hint: "[reason]"
-allowed-tools: Read, Write, Glob, Grep, ExitPlanMode, Skill, Bash(~/.claude/skills/friction-management)
+argument-hint: "[source of friction]"
+allowed-tools: Read, Glob, Grep, Skill(friction-management)
 ---
 # Friction Documentation
 
@@ -11,8 +11,8 @@ Capture friction points for the curated domain, language, library or operation. 
 ## Process
 
 1. **Analyze Context**
-   - Review recent conversation for friction points
-   - Consider user reason: $ARGUMENTS
+   - Review recent conversation for friction points. Cases where the user has rejected edits, expressed frustration, etc.
+   - Consider user reason (optional input): $ARGUMENTS
 
 2. **Invoke Friction Management Skill**
    - Use Skill tool to access formatting guidance
