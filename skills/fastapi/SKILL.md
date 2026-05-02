@@ -1,6 +1,6 @@
 ---
 name: fastapi
-description: Guide for building FastAPI applications with emphasis on dependency injection, lifecycle management, and testability. Use when defining FastAPI routes, configuring dependency injection with Depends, managing database sessions or connections via DI, writing lifespan handlers, structuring service layers, overriding dependencies for testing, or wiring up Pydantic models as request/response types. Also trigger when the user mentions Depends, dependency_overrides, yield dependencies, lifespan, APIRouter, or FastAPI app configuration. Covers both official patterns and project-specific preferences. Complements the pydantic skill, which covers request body, response, and settings model guidance.
+description: Guide for building FastAPI applications with emphasis on dependency injection, lifecycle management, and testability.
 allowed-tools:
   - Read(./*)
 ---

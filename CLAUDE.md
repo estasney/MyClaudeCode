@@ -1,43 +1,28 @@
 # Global Rules
 
-When I ask for something specific, do exactly that without adding assumptions or extra steps
-Unless I'm in 'accept edits' mode, keep your edits between 2-6 lines ideally.
-Always think how you could minimize the diff size.
-Be skeptical of your own correctness or stated assumptions. You temper your optimism with self-doubt. You are hesitant to mark a task as complete - have you actually verified this?
-Easier to ask Forgiveness then Permission. Don't try to anticipate exceptions.
-Never execute tests yourself.
-Code comments are code smells. Code should be explanatory.
-NEVER use a 'force' flag for any command whatsoever. 
-Before changing code, mention what you will do and why. This should be done before every call to your edit tool. You do *not* need to ask for permission each time
-If we are conversing and you have a question, use the AskUserQuestion tool.
-No 'drive by' edits. Never change code unless it has been explicitly asked for. However, you are encouraged to mention issues you see.
-Don't assume you have a perfect re-collection of a file you read 3-5 turns ago. Always re-read.
+- When I ask for something specific, do exactly that without adding assumptions, abstractions, or extra steps.
+- NEVER use a 'force' flag for any command whatsoever. 
+- Before changing code, mention what you will do and why. This should be done before every call to your edit tool. You do *not* need to ask for permission each time
+- Don't assume you have a perfect re-collection of a file you read 3-5 turns ago. Always re-read.
+- Always use the CLAUDE.md file at <repo_root>/.claude/CLAUDE.md. Never <repo_root>/CLAUDE.md
 
 ## Code Quality Rules
-- Make only the minimum changes required. This includes reformatting larger blocks of code where your changes will be made.
-- Write commit messages with a one-sentence high-level description followed by a newline. Include additional details on each line. Use third person, active voice. Only state what was changed. Never use emojis. Never mention claude code in the message. I.e. "Applied linting" vs "Applied linting to improve and enhance codebase readability".
-- Don't ever write 'example code' unless directed to.
-- Always write the minimum viable implementation.
-- Never say "you're absolutely right". That is an immediate red flag that you're being agreeable (bad), not helpful (good).
-- If I've corrected you on something, don't assume you know the fix. You can suggest some approaches, but always confirm that you're fix is desired. Do this with the AskUserQuestion tool.
-- Write code that follows the pattern of 'Functional Core and Imperative Shell'
-- If working with a library or framework and there is a skill available - always use the skill.
+
+- Leave the formatting and linting fixes to tools. 
+- Good code runs today. Great code is easily understandable by other developers.
+- Never take any action to silence linter's warnings. This includes ignore comments, changing the linter config, etc
+- If, during your work you notice an area of the codebase that you could improve, suggest a fix. If approved, you'll the codebase in a better place. 
 
 ## Python
 
+- Write code that follows the pattern of 'Functional Core and Imperative Shell'
 - Prefer single line, triple docstrings. Never include Args, or Params.
 - Assume I'm using `uv`, not `pip`
 - No assert statements in production code
-- Never add linter disable comments.
-
-## Testing Guidelines
-
-- Establish the contract.
-- Test the implementation. Does it follow the contract?
-- Use the pytest skill.
+- (Pydantic OR Dataclass) prefer over (Namedtuple) prefer over (TypedDict OR dict[str, object]) prever over (dict).
 
 ## Planning
 
 - Never explicitly write examples. Only write the main ideas, and concerns.
+- Avoid concrete references, such as file names, line numbers, derived statistics. This quickly go stale.
 - Never attempt to influence implementation unless I or these rules state otherwise.
-- I prefer plain markdown, with sparing use of formatting like bold, headers, sections.

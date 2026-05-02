@@ -48,8 +48,34 @@ formatted_output=$(printf "%'d" "$total_output" 2>/dev/null || echo "$total_outp
 formatted_cache_creation=$(printf "%'d" "$cache_creation" 2>/dev/null || echo "$cache_creation")
 formatted_cache_read=$(printf "%'d" "$cache_read" 2>/dev/null || echo "$cache_read")
 
+# 5-hour rate limit with progress bar and reset countdown
+FIVE_H=$(echo "$input" | jq -r '.rate_limits.five_hour.used_percentage // empty')
+RESETS_AT=$(echo "$input" | jq -r '.rate_limits.five_hour.resets_at // empty')
+LIMITS=""
+if [ -n "$FIVE_H" ]; then
+    pct=$(printf '%.0f' "$FIVE_H")
+    if [ "$pct" -ge 90 ]; then BAR_COLOR='\033[91m'
+    elif [ "$pct" -ge 70 ]; then BAR_COLOR='\033[93m'
+    else BAR_COLOR='\033[92m'; fi
+    filled=$((pct / 5)); empty=$((20 - filled))
+    printf -v FILL "%${filled}s"; printf -v PAD "%${empty}s"
+    filled_bar="${FILL// /█}"
+    empty_bar="${PAD// /⣿}"
+    reset_str=""
+    if [ -n "$RESETS_AT" ]; then
+        now=$(date +%s)
+        diff=$(( ${RESETS_AT%.*} - now ))
+        if [ "$diff" -gt 0 ]; then
+            hrs=$((diff / 3600))
+            mins=$(( (diff % 3600) / 60 ))
+            reset_str=" ↻ ${hrs}h$(printf '%02d' $mins)m"
+        fi
+    fi
+    LIMITS=$(printf ' 5h: %b%s\033[0m\033[90m%s\033[0m %s%%%s' "$BAR_COLOR" "$filled_bar" "$empty_bar" "$pct" "$reset_str")
+fi
+
 # Build the status content
-CONTENT=$(printf '%s (%s) $%s | ↓%s ↑%s ⊕ %s ⊙ %s' "$model" "$formatted_total" "$cost" "$formatted_input" "$formatted_output" "$formatted_cache_creation" "$formatted_cache_read")
+CONTENT=$(printf '%s (%s) $%s | ↓%s ↑%s cw:%s cr:%s%s' "$model" "$formatted_total" "$cost" "$formatted_input" "$formatted_output" "$formatted_cache_creation" "$formatted_cache_read" "$LIMITS")
 
 # Right-justification code (commented out for left-aligned display)
 # Get terminal width using stty with /dev/tty
@@ -70,4 +96,4 @@ CONTENT=$(printf '%s (%s) $%s | ↓%s ↑%s ⊕ %s ⊙ %s' "$model" "$formatted_
 # printf '\033[%dG%s' "$((pad + 1))" "$CONTENT"
 
 # Print with left alignment
-printf '%s' "$CONTENT"
+echo -e "$CONTENT"

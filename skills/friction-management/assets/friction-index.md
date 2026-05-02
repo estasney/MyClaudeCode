@@ -6,7 +6,7 @@ Tag-based index mapping tags to friction point files. Updated automatically as f
 
 ## General
 
-**Behavior**: `general/behavior.md` - Tags: behavior, question-asking, scaffolding
+**Behavior**: `general/behavior.md` - Tags: behavior, question-asking, scaffolding, transcription, verbatim
 
 ## Python
 

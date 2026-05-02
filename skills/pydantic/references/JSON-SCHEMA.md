@@ -26,6 +26,33 @@ Parameters:
 
 Sub-models are placed in `$defs` and referenced. Sub-models with modified Field metadata (custom title, description, default) are inlined instead of referenced.
 
+### $ref resolution for grammar-constrained LLM output
+
+Llama.cpp's JSON-schema-to-GBNF grammar converter does not reliably resolve `$ref` pointers into `$defs`. Schemas with discriminated unions or shared sub-models produce broken grammars. Workaround: override `model_json_schema` on the model to recursively inline all `$ref` nodes and strip `$defs`:
+
+```python
+from pydantic.json_schema import JsonSchemaMode
+
+def _resolve_refs(schema: dict) -> dict:
+    defs = schema.get("$defs", {})
+    def _resolve(node):
+        if isinstance(node, dict):
+            if "$ref" in node:
+                return _resolve(defs[node["$ref"].split("/")[-1]])
+            return {k: _resolve(v) for k, v in node.items() if k != "$defs"}
+        if isinstance(node, list):
+            return [_resolve(item) for item in node]
+        return node
+    return _resolve(schema)
+
+class MyModel(ParagonModel):
+    @classmethod
+    def model_json_schema(cls, mode: JsonSchemaMode = "validation", **kwargs) -> dict:
+        return _resolve_refs(super().model_json_schema(mode=mode, **kwargs))
+```
+
+This is only needed when the schema is consumed by external grammar builders (llama.cpp, vLLM, etc.), not for OpenAPI/FastAPI use.
+
 ## SkipJsonSchema
 
 Excludes a type (or part of a union) from the generated JSON schema. The field still participates in validation and serialization -- only its schema representation is suppressed.
