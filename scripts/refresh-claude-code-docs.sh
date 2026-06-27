@@ -28,7 +28,7 @@ slugs=(
   plugins-reference plugin-dependencies mcp mcp-quickstart
   cli-reference tools-reference model-config keybindings
   sandboxing sandbox-environments errors
-  agents agent-teams advisor goal
+  agents agent-teams advisor goal plugin-marketplaces
 )
 
 mkdir -p "$MANAGED_DIR"
