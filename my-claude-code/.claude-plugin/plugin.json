@@ -1,0 +1,9 @@
+{
+  "$schema": "https://anthropic.com/claude-code/plugin.schema.json",
+  "name": "my-claude-code",
+  "description": "Personal Claude Code plugin",
+  "author": {
+    "name": "estasney",
+    "email": "estasney@users.noreply.github.com"
+  }
+}
