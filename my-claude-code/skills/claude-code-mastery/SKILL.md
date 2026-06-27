@@ -1,7 +1,7 @@
 ---
 name: claude-code-mastery
 description: Authoritative reference for Claude Code's own configuration and feature surface
-disable-model-invocation: true
+disable-model-invocation: false
 allowed-tools: Bash(ls *)
 ---
 
