@@ -1,0 +1,31 @@
+{
+  "basedpyright": {
+    "command": "uvx",
+    "args": ["--from", "basedpyright", "basedpyright-langserver", "--stdio"],
+    "extensionToLanguage": {
+      ".py": "python",
+      ".pyi": "python"
+    },
+    "settings": {
+      "python": {
+        "venvPath": "${CLAUDE_PROJECT_DIR}",
+        "venv": ".venv"
+      },
+      "basedpyright": {
+        "analysis": {
+          "diagnosticSeverityOverrides": {
+            "reportAny": "none"
+          }
+        }
+      }
+    }
+  },
+  "ruff": {
+    "command": "uvx",
+    "args": ["ruff", "server"],
+    "extensionToLanguage": {
+      ".py": "python",
+      ".pyi": "python"
+    }
+  }
+}

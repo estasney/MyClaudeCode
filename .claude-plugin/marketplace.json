@@ -1,0 +1,11 @@
+{
+  "name": "claude-code",
+  "owner": { "name": "estasney" },
+  "plugins": [
+    {
+      "name": "my-claude-code",
+      "source": "./my-claude-code",
+      "description": "Personal Claude Code setup: curated skills, commands, hooks, and output styles."
+    }
+  ]
+}
