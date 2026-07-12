@@ -50,3 +50,5 @@ mypackage/
 ```
 
 File discovery respects `.gitignore` when the target is inside a git repository; otherwise hidden directories and well-known artifact directories (node_modules, __pycache__, dist, and similar) are skipped.
+
+The user sees the output, there is no need to summarize or re-hash unless requested
