@@ -26,6 +26,11 @@
     "extensionToLanguage": {
       ".py": "python",
       ".pyi": "python"
+    },
+    "initializationOptions": {
+      "settings": {
+        "configurationPreference": "filesystemFirst"
+      }
     }
   }
 }
