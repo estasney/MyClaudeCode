@@ -2,3 +2,5 @@
 .idea
 .*
 !.claude-plugin
+!**/.claude-plugin
+!**/.lsp.json
