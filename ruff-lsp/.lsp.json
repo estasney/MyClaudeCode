@@ -1,0 +1,15 @@
+{
+  "ruff": {
+    "command": "uvx",
+    "args": ["ruff", "server"],
+    "extensionToLanguage": {
+      ".py": "python",
+      ".pyi": "python"
+    },
+    "initializationOptions": {
+      "settings": {
+        "configurationPreference": "filesystemFirst"
+      }
+    }
+  }
+}

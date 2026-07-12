@@ -1,0 +1,9 @@
+{
+  "$schema": "https://anthropic.com/claude-code/plugin.schema.json",
+  "name": "ruff-lsp",
+  "description": "ruff language server for Python: lint and format diagnostics, deferring to pyproject.toml. Claims .py and .pyi, so enable only one Python LSP plugin at a time.",
+  "author": {
+    "name": "estasney",
+    "email": "estasney@users.noreply.github.com"
+  }
+}
