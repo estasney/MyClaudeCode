@@ -1,11 +1,17 @@
 {
-  "basedpyright": {
-    "command": "uvx",
-    "args": ["--from", "basedpyright", "basedpyright-langserver", "--stdio"],
+  "python": {
+    "command": "uv",
+    "args": [
+      "run",
+      "--script",
+      "${CLAUDE_PLUGIN_ROOT}/scripts/lsp_mux.py",
+      "${CLAUDE_PLUGIN_ROOT}/servers.json"
+    ],
     "extensionToLanguage": {
       ".py": "python",
       ".pyi": "python"
     },
+    "startupTimeout": 60000,
     "settings": {
       "python": {
         "venvPath": "${CLAUDE_PROJECT_DIR}",

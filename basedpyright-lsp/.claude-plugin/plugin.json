@@ -1,9 +1,0 @@
-{
-  "$schema": "https://anthropic.com/claude-code/plugin.schema.json",
-  "name": "basedpyright-lsp",
-  "description": "basedpyright language server for Python: type diagnostics and code navigation. Claims .py and .pyi, so enable only one Python LSP plugin at a time.",
-  "author": {
-    "name": "estasney",
-    "email": "estasney@users.noreply.github.com"
-  }
-}

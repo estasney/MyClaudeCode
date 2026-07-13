@@ -1,0 +1,22 @@
+{
+  "servers": [
+    {
+      "name": "basedpyright",
+      "cmd": "uvx",
+      "args": ["--from", "basedpyright", "basedpyright-langserver", "--stdio"]
+    },
+    {
+      "name": "ruff",
+      "cmd": "uvx",
+      "args": ["ruff", "server"],
+      "initializationOptions": {
+        "settings": {
+          "configurationPreference": "filesystemFirst"
+        }
+      },
+      "settings": {
+        "configurationPreference": "filesystemFirst"
+      }
+    }
+  ]
+}

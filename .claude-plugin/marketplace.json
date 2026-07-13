@@ -8,14 +8,9 @@
       "description": "Personal Claude Code setup: curated skills, commands, hooks, and output styles."
     },
     {
-      "name": "basedpyright-lsp",
-      "source": "./basedpyright-lsp",
-      "description": "basedpyright language server for Python: type diagnostics and code navigation. Claims .py and .pyi, so enable only one Python LSP plugin at a time."
-    },
-    {
-      "name": "ruff-lsp",
-      "source": "./ruff-lsp",
-      "description": "ruff language server for Python: lint and format diagnostics, deferring to pyproject.toml. Claims .py and .pyi, so enable only one Python LSP plugin at a time."
+      "name": "python-lsp",
+      "source": "./python-lsp",
+      "description": "Python code intelligence: basedpyright and ruff behind a multiplexing proxy, registered as one language server. Type errors, navigation, and lint diagnostics together."
     }
   ]
 }

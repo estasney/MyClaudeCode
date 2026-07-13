@@ -1,0 +1,9 @@
+{
+  "$schema": "https://anthropic.com/claude-code/plugin.schema.json",
+  "name": "python-lsp",
+  "description": "Python code intelligence: basedpyright and ruff behind a multiplexing proxy, registered as one language server. Type errors, navigation, and lint diagnostics together.",
+  "author": {
+    "name": "estasney",
+    "email": "estasney@users.noreply.github.com"
+  }
+}
