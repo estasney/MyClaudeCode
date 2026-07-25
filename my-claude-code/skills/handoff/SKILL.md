@@ -2,6 +2,7 @@
 name: handoff
 description: Write a handoff so the next session can resume this work without rediscovering it. Manual; invoke with /handoff.
 argument-hint: [optional name or note]
+allowed-tools: Bash, Write
 disable-model-invocation: true
 ---
 
