@@ -23,12 +23,43 @@ BASE_URL="https://code.claude.com/docs/en"
 
 # Curated scope manifest. Adding a doc is a deliberate one-line edit here.
 slugs=(
-  settings hooks permissions permission-modes env-vars claude-directory
-  commands skills sub-agents output-styles memory statusline
-  plugins-reference plugin-dependencies mcp mcp-quickstart
-  cli-reference tools-reference model-config keybindings
-  sandboxing sandbox-environments errors
-  agents agent-teams advisor goal plugin-marketplaces
+  advisor
+  agent-teams
+  agents
+  analytics
+  channels
+  claude-directory
+  cli-reference
+  commands
+  env-vars
+  errors
+  feature-availability
+  features-overview
+  goal
+  hooks
+  keybindings
+  large-codebases
+  mcp
+  mcp-quickstart
+  memory
+  model-config
+  output-styles
+  permission-modes
+  permissions
+  plugin-dependencies
+  plugin-hints
+  plugin-marketplaces
+  plugins-reference
+  prompt-caching
+  routines
+  sandbox-environments
+  sandboxing
+  settings
+  setup
+  skills
+  statusline
+  sub-agents
+  tools-reference
 )
 
 mkdir -p "$MANAGED_DIR"
