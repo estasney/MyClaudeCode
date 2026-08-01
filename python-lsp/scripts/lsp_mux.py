@@ -19,6 +19,12 @@ Routing model
 * All servers receive lifecycle and document-synchronization notifications
   (didOpen/didChange/...), so each can produce diagnostics.
 * ``textDocument/publishDiagnostics`` from all servers is merged per URI.
+* A merged publish is held while a document settles: didOpen/didChange
+  starts a hold, released once every server has published for that version
+  or after a short timeout (basedpyright skips publishing entirely when an
+  edit leaves its diagnostics unchanged). Without the hold, ruff's
+  synchronous publish would be merged with the other server's stale list
+  and emitted, describing a file state that no longer exists.
 * A request whose capability the primary does not advertise is routed to the
   first server that does (e.g. formatting -> ruff when basedpyright is
   primary).
@@ -51,12 +57,13 @@ import os
 import signal
 import sys
 import threading
-import tomllib
 from collections.abc import Iterable, Sequence
 from contextlib import suppress
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, BinaryIO, Protocol, Self
+
+import tomllib
 
 type Json = dict[str, Any]
 type MsgId = int | str
@@ -353,6 +360,33 @@ class Pending:
     client_id: MsgId | None  # set when the request originated at the client
 
 
+@dataclass(slots=True)
+class DocumentHold:
+    """Diagnostics gate for a document with an in-flight edit.
+
+    Created when didOpen/didChange passes through; merged publishes for the
+    URI are withheld until every server has published for this version (a
+    publish without a version counts) or the settle timer expires. A server
+    staying silent past the timeout means its previous diagnostics still
+    stand, so the held slots are safe to emit.
+    """
+
+    version: int | None
+    servers_reported: set[int]
+    timer: asyncio.Task[None] | None = None
+
+
+def covers_held_version(hold: DocumentHold, version: Any) -> bool:
+    """Whether a publish is current enough to count toward releasing a hold.
+
+    Publishes without a version (basedpyright's close-time clears) are taken
+    at face value as current.
+    """
+    if hold.version is None or not isinstance(version, int):
+        return True
+    return version >= hold.version
+
+
 class Server:
     """A child (or socket-connected) LSP server."""
 
@@ -443,15 +477,23 @@ class Server:
 
 
 class Proxy:
-    def __init__(self, client: Endpoint, servers: Sequence[Server]):
+    def __init__(
+        self,
+        client: Endpoint,
+        servers: Sequence[Server],
+        settle_seconds: float = 1.0,
+    ):
         self.client = client
         self.servers = list(servers)
         self.primary = self.servers[0]
+        self.settle_seconds = settle_seconds
         # proxy-assigned id -> originating server, for server->client requests
         self.pending_client_requests: dict[int, tuple[Server, MsgId]] = {}
         self.next_client_id = 0
         # uri -> {server index: diagnostics list}
         self.diagnostics_by_uri: dict[str, dict[int, list[Json]]] = {}
+        # uri -> gate withholding merged publishes while an edit settles
+        self.holds: dict[str, DocumentHold] = {}
         # executeCommand command name -> server
         self.command_owners: dict[str, Server] = {}
         self.exiting: asyncio.Event = asyncio.Event()
@@ -548,6 +590,7 @@ class Proxy:
                     payload = params if settings is None else {"settings": settings}
                     await server.endpoint.notify(method, payload)
             case _ if method in BROADCAST_NOTIFICATIONS:
+                self.track_document_sync(method, params)
                 for server in self.servers:
                     await server.endpoint.notify(method, params)
             case _:
@@ -752,14 +795,63 @@ class Proxy:
             return
         per_uri = self.diagnostics_by_uri.setdefault(uri, {})
         per_uri[server.index] = params.get("diagnostics", [])
+        hold = self.holds.get(uri)
+        if hold is None:
+            await self.emit_merged(uri, version=params.get("version"))
+            return
+        if covers_held_version(hold, params.get("version")):
+            hold.servers_reported.add(server.index)
+        if len(hold.servers_reported) == len(self.servers):
+            self.release_hold(uri)
+            await self.emit_merged(uri, version=hold.version)
+
+    # ---- diagnostics settling ---------------------------------------------
+
+    def track_document_sync(self, method: str, params: Any) -> None:
+        match method:
+            case "textDocument/didOpen" | "textDocument/didChange":
+                self.begin_hold(params)
+            case "textDocument/didClose":
+                match params:
+                    case {"textDocument": {"uri": str(uri)}}:
+                        self.release_hold(uri)
+
+    def begin_hold(self, params: Any) -> None:
+        match params:
+            case {"textDocument": {"uri": str(uri), **fields}}:
+                version = fields.get("version")
+            case _:
+                return
+        self.release_hold(uri)
+        hold = DocumentHold(
+            version=version if isinstance(version, int) else None,
+            servers_reported=set(),
+        )
+        hold.timer = asyncio.ensure_future(self.expire_hold(uri))
+        self.holds[uri] = hold
+
+    def release_hold(self, uri: str) -> DocumentHold | None:
+        hold = self.holds.pop(uri, None)
+        if hold is not None and hold.timer is not None:
+            hold.timer.cancel()
+        return hold
+
+    async def expire_hold(self, uri: str) -> None:
+        await asyncio.sleep(self.settle_seconds)
+        hold = self.holds.pop(uri, None)
+        if hold is not None:
+            await self.emit_merged(uri, version=hold.version)
+
+    async def emit_merged(self, uri: str, version: Any = None) -> None:
+        per_uri = self.diagnostics_by_uri.get(uri, {})
         merged: Json = {
             "uri": uri,
             "diagnostics": [
                 diagnostic for index in sorted(per_uri) for diagnostic in per_uri[index]
             ],
         }
-        if "version" in params:
-            merged["version"] = params["version"]
+        if version is not None:
+            merged["version"] = version
         await self.client.notify("textDocument/publishDiagnostics", merged)
 
 
