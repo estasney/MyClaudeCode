@@ -169,7 +169,7 @@ For paths that are checked in, such as a vendored SDK or committed generated cod
 The deny rules can cover everyone working in the repository, only you, or every session on the machine, depending on which settings file you put them in:
 
 * **Everyone working in the repository**: commit the rules to `.claude/settings.json`. Like other project settings on this page, that file loads only from your starting directory, so place it at the repository root if you start Claude there, or in each package's `.claude/` if you start from subdirectories.
-* **Yourself only**: use `.claude/settings.local.json` at the repository root, which loads in every CLI session inside the repository regardless of starting directory. Relative patterns like the example's `Read(./vendor/**)` still [anchor at the directory you start Claude Code from](/docs/en/permissions#read-and-edit), so if you start sessions from subdirectories, write the rules in this file as `//`-absolute paths, such as `Read(//absolute/path/to/repo/vendor/**)`. {/* min-version: 2.1.211 */}Before v2.1.211, `.claude/settings.local.json` also loaded only from the starting directory.
+* **Yourself only**: use `.claude/settings.local.json` at the repository root, which loads in every CLI session inside the repository regardless of starting directory. Relative patterns like the example's `Read(./vendor/**)` still [anchor at the directory you start Claude Code from](/docs/en/permissions#read-and-edit), so if you start sessions from subdirectories, write the rules in this file as `//`-absolute paths, such as `Read(//absolute/path/to/repo/vendor/**)`. Before v2.1.211, `.claude/settings.local.json` also loaded only from the starting directory.
 * **Everyone, enforced in every session**: set the rules in [managed settings](/docs/en/settings#settings-files), which user and project settings cannot override.
 
 The example below blocks build artifacts and a vendored SDK:
@@ -199,7 +199,10 @@ The official marketplace has plugins for TypeScript, Python, Go, Rust, and other
 /plugin install typescript-lsp@claude-plugins-official
 ```
 
-If Claude Code reports `Marketplace "claude-plugins-official" not found`, add the marketplace with `/plugin marketplace add anthropics/claude-plugins-official`. If it reports that the plugin is not found in the marketplace, your local copy is outdated: refresh it with `/plugin marketplace update claude-plugins-official`. Then retry the install.
+If the install fails, match the message Claude Code reports:
+
+* `Marketplace "claude-plugins-official" not found`: add the marketplace with `/plugin marketplace add anthropics/claude-plugins-official`, then retry the install.
+* The plugin is [not found in the marketplace](/docs/en/discover-plugins#install-plugins): check the plugin name.
 
 To enable a plugin for everyone in the repository rather than installing it yourself, add it to the [`enabledPlugins` project setting](/docs/en/settings#plugin-settings).
 
@@ -389,7 +392,7 @@ See [server-managed or endpoint-managed settings](/docs/en/server-managed-settin
 
 ### Recommend the right plugin at session start
 
-Once conventions live in plugins, a teammate starting Claude in an unfamiliar part of the tree has no signal about which plugin that area's owners maintain. A [`SessionStart` hook](/docs/en/hooks#sessionstart) can close that gap, since anything the hook prints to stdout is added to Claude's context before the first prompt.
+Once conventions live in plugins, a teammate starting Claude in an unfamiliar part of the tree has no signal about which plugin that area's owners maintain. A [`SessionStart` hook](/docs/en/hooks#sessionstart) can close that gap, since Claude Code adds plain text the hook prints to stdout to Claude's context before the first prompt.
 
 For example, you can write a script that reads the launch directory from the [hook input](/docs/en/hooks#common-input-fields), looks it up in a path-to-plugin map committed to the repository, and prints the recommendation for Claude to relay in its first reply. See [Automate actions with hooks](/docs/en/hooks-guide) to write and register the hook.
 
