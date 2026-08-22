@@ -19,7 +19,7 @@ fi
 
 project_slug=$(basename "$project_dir")
 
-handoff_dir="${data_dir}/${project_slug}"
+handoff_dir="${data_dir}/handoffs/${project_slug}"
 mkdir -p "$handoff_dir"
 
 printf 'directory: %s\n' "$handoff_dir"
