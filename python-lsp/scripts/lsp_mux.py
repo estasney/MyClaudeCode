@@ -19,6 +19,7 @@ Routing model
 * All servers receive lifecycle and document-synchronization notifications
   (didOpen/didChange/...), so each can produce diagnostics.
 * ``textDocument/publishDiagnostics`` from all servers is merged per URI.
+* Diagnostics for files outside every workspace folder are emitted empty.
 * A merged publish is held while a document settles: didOpen/didChange
   starts a hold, released once every server has published for that version
   or after a short timeout (basedpyright skips publishing entirely when an
@@ -62,6 +63,8 @@ from contextlib import suppress
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, BinaryIO, Protocol, Self
+from urllib.parse import urlsplit
+from urllib.request import url2pathname
 
 import tomllib
 
@@ -376,6 +379,24 @@ class DocumentHold:
     timer: asyncio.Task[None] | None = None
 
 
+def path_from_uri(uri: str) -> Path | None:
+    """Local path for a file:// URI; None for any other scheme."""
+    parts = urlsplit(uri)
+    if parts.scheme != "file":
+        return None
+    return Path(url2pathname(parts.path))
+
+
+def workspace_folder_uris(folders: Any) -> list[str]:
+    if not isinstance(folders, list):
+        return []
+    return [
+        uri
+        for folder in folders
+        if isinstance(folder, dict) and isinstance(uri := folder.get("uri"), str)
+    ]
+
+
 def covers_held_version(hold: DocumentHold, version: Any) -> bool:
     """Whether a publish is current enough to count toward releasing a hold.
 
@@ -494,6 +515,8 @@ class Proxy:
         self.diagnostics_by_uri: dict[str, dict[int, list[Json]]] = {}
         # uri -> gate withholding merged publishes while an edit settles
         self.holds: dict[str, DocumentHold] = {}
+        # files outside every root get empty diagnostics; empty set = no filter
+        self.workspace_roots: set[Path] = set()
         # executeCommand command name -> server
         self.command_owners: dict[str, Server] = {}
         self.exiting: asyncio.Event = asyncio.Event()
@@ -590,7 +613,7 @@ class Proxy:
                     payload = params if settings is None else {"settings": settings}
                     await server.endpoint.notify(method, payload)
             case _ if method in BROADCAST_NOTIFICATIONS:
-                self.track_document_sync(method, params)
+                self.track_client_state(method, params)
                 for server in self.servers:
                     await server.endpoint.notify(method, params)
             case _:
@@ -635,6 +658,7 @@ class Proxy:
 
     async def initialize(self, params: Any) -> Json:
         params = params if isinstance(params, dict) else {}
+        self.record_workspace_roots(params)
         futures = []
         for server in self.servers:
             per_server = dict(params)
@@ -663,6 +687,33 @@ class Proxy:
             "commands": sorted(self.command_owners)
         }
         return merged
+
+    def record_workspace_roots(self, params: Json) -> None:
+        """Seed the roots from initialize: workspaceFolders, else rootUri, else rootPath."""
+        uris = workspace_folder_uris(params.get("workspaceFolders"))
+        if not uris and isinstance(params.get("rootUri"), str):
+            uris = [params["rootUri"]]
+        self.add_workspace_roots(uris)
+        if not self.workspace_roots and isinstance(params.get("rootPath"), str):
+            self.workspace_roots.add(Path(params["rootPath"]))
+
+    def add_workspace_roots(self, uris: Iterable[str]) -> None:
+        for uri in uris:
+            if (path := path_from_uri(uri)) is not None:
+                self.workspace_roots.add(path)
+
+    def remove_workspace_roots(self, uris: Iterable[str]) -> None:
+        for uri in uris:
+            if (path := path_from_uri(uri)) is not None:
+                self.workspace_roots.discard(path)
+
+    def in_workspace(self, uri: str) -> bool:
+        if not self.workspace_roots:
+            return True
+        path = path_from_uri(uri)
+        if path is None:
+            return True  # untitled:, notebook cells, ... are not filterable
+        return any(path.is_relative_to(root) for root in self.workspace_roots)
 
     def register_commands(self, server: Server) -> None:
         provider = server.capabilities.get("executeCommandProvider")
@@ -793,6 +844,11 @@ class Proxy:
         uri = params.get("uri")
         if not isinstance(uri, str):
             return
+        if not self.in_workspace(uri):
+            await self.client.notify(
+                "textDocument/publishDiagnostics", {"uri": uri, "diagnostics": []}
+            )
+            return
         per_uri = self.diagnostics_by_uri.setdefault(uri, {})
         per_uri[server.index] = params.get("diagnostics", [])
         hold = self.holds.get(uri)
@@ -807,14 +863,17 @@ class Proxy:
 
     # ---- diagnostics settling ---------------------------------------------
 
-    def track_document_sync(self, method: str, params: Any) -> None:
-        match method:
-            case "textDocument/didOpen" | "textDocument/didChange":
+    def track_client_state(self, method: str, params: Any) -> None:
+        match method, params:
+            case "textDocument/didOpen" | "textDocument/didChange", _:
                 self.begin_hold(params)
-            case "textDocument/didClose":
-                match params:
-                    case {"textDocument": {"uri": str(uri)}}:
-                        self.release_hold(uri)
+            case "textDocument/didClose", {"textDocument": {"uri": str(uri)}}:
+                self.release_hold(uri)
+            case "workspace/didChangeWorkspaceFolders", {"event": dict(event)}:
+                self.add_workspace_roots(workspace_folder_uris(event.get("added")))
+                self.remove_workspace_roots(workspace_folder_uris(event.get("removed")))
+            case _:
+                pass
 
     def begin_hold(self, params: Any) -> None:
         match params:
@@ -822,6 +881,8 @@ class Proxy:
                 version = fields.get("version")
             case _:
                 return
+        if not self.in_workspace(uri):
+            return
         self.release_hold(uri)
         hold = DocumentHold(
             version=version if isinstance(version, int) else None,
