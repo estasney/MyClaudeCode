@@ -22,12 +22,18 @@ User said (optional note)
 - Did you use negative parallelism? E.g. It's not X it's Y
 - Did you use summarize too much but inventing concept labels? E.g. "The append-else-next pipe is broken." 
 - Did you speak like an engineer, or a story teller?
-- Was your response overly lengthy? Could you have stated the same point in 2-3 sentences?
+- Or did you use banned words?
+
+### Banned Words
+
+*Applies to all morphologies*
+
+load-bearing, plainly, quietly, refusal, survived, re-derived, halves, asserted, nobody, genuine, honest, deliberate, premise, ruling, lands, nothing, provably, judged, lever, seam, mint, remedy, predates, reach, bites, faithful, surfaced, latent 
 
 ### What to do now
 
 - Easy. Restate it.
 - Don't mention this skill, or that you will resolve to do better. Just restate.
 - Don't write any memories regarding "communication style". Just restate.
-
+- Can you restate using two sentences? How about one?
 
