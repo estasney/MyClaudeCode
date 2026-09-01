@@ -30,10 +30,11 @@ Options:
 
 - `--zero-only` — only symbols with zero references. The default for dead-code hunting; omit it when the question is how much a symbol is used rather than whether.
 - `--json` — structured output instead of the table.
+- `--timeout` — seconds to wait for any single language server message; default 120. On expiry the script prints one line to stderr and exits 1, as it does for any other failure.
 
 The project root is where references are searched; the language server is rooted there, so it picks up the project's basedpyright config and a `src` directory. When the root lands inside a package, the script ascends to the package's parent for the search scope, since imports only resolve from there — a package detected by its `__init__.py` files, so a namespace package needs the parent passed explicitly. Code outside that resolved scope contributes no references.
 
-The optional paths — Python files or directories inside the root — control which symbols get counted; with none given, every file under the root is counted. Output paths are relative to the root.
+The optional paths — Python files or directories inside the root — control which symbols get counted; with none given, every file under the root is counted. A relative path is taken relative to the root, not the working directory. Output paths are relative to the root.
 
 Pass the production package or module as a path rather than counting the whole root: scanning a whole repo counts test functions and scripts as candidate symbols, and every pytest test reads 0 because nothing references tests.
 

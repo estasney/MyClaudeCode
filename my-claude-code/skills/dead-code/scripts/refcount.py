@@ -16,9 +16,11 @@ from __future__ import annotations
 
 import argparse
 import json
+import queue
 import shutil
 import subprocess
 import sys
+import threading
 from collections import Counter
 from dataclasses import asdict, dataclass, field
 from itertools import count
@@ -56,8 +58,31 @@ class SymbolReferences:
 @dataclass
 class LspServer:
     proc: subprocess.Popen[bytes]
+    timeout: float
     request_ids: count[int] = field(default_factory=lambda: count(1))
     workspace_scanned: bool = False
+    inbox: queue.Queue[dict[str, object] | Exception | None] = field(default_factory=queue.Queue)
+
+    @classmethod
+    def start(cls, command: str, timeout: float) -> LspServer:
+        proc = subprocess.Popen(
+            [command, "--stdio"],
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+        )
+        srv = cls(proc, timeout)
+        threading.Thread(target=srv.pump_messages, daemon=True).start()
+        return srv
+
+    def pump_messages(self) -> None:
+        """Reader thread: move every server message into the inbox; None marks the end of the stream."""
+        try:
+            while (message := self.read_message()) is not None:
+                self.inbox.put(message)
+            self.inbox.put(None)
+        except (OSError, ValueError, TypeError, RuntimeError) as exc:
+            self.inbox.put(exc)
 
     def write_message(self, msg: dict[str, object]) -> None:
         if self.proc.stdin is None:
@@ -69,7 +94,7 @@ class LspServer:
     def notify(self, method: str, params: object) -> None:
         self.write_message({"jsonrpc": "2.0", "method": method, "params": params})
 
-    def read(self) -> dict[str, object]:
+    def read_message(self) -> dict[str, object] | None:
         if self.proc.stdout is None:
             raise RuntimeError("language server stdout is closed")
         headers: dict[str, str] = {}
@@ -81,11 +106,22 @@ class LspServer:
             if sep:
                 headers[key.lower()] = val.strip()
         if "content-length" not in headers:
-            raise RuntimeError("language server closed the connection")
+            return None
         body = self.proc.stdout.read(int(headers["content-length"]))
         message: object = json.loads(body)
         if not isinstance(message, dict):
             raise TypeError("language server sent a non-object message")
+        return message
+
+    def read(self) -> dict[str, object]:
+        try:
+            message = self.inbox.get(timeout=self.timeout)
+        except queue.Empty:
+            raise TimeoutError(f"no message from language server in {self.timeout:g}s") from None
+        if message is None:
+            raise RuntimeError("language server closed the connection")
+        if isinstance(message, Exception):
+            raise message
         return message
 
     def request(self, method: str, params: object) -> object:
@@ -100,10 +136,12 @@ class LspServer:
                 case _:
                     continue  # server notifications, diagnostics, logs
 
-    def wait_for_diagnostics(self, uri: str) -> None:
+    def wait_for_diagnostics(self, path: Path) -> None:
         while True:
             match self.read():
-                case {"method": "textDocument/publishDiagnostics", "params": {"uri": str(u)}} if u == uri:
+                case {"method": "textDocument/publishDiagnostics", "params": {"uri": str(u)}} if (
+                    path_from_uri(u) == path
+                ):
                     return
                 case _:
                     continue
@@ -127,7 +165,7 @@ class LspServer:
             },
         )
         if not self.workspace_scanned:
-            self.wait_for_diagnostics(uri)
+            self.wait_for_diagnostics(path)
             self.workspace_scanned = True
         return uri
 
@@ -154,6 +192,11 @@ class LspServer:
         if result is not None:
             raise RuntimeError(f"shutdown: unexpected response {result!r}")
         self.notify("exit", None)
+
+
+def path_from_uri(uri: str) -> Path:
+    """Decode a file URI the way the server spells it (percent-encoded drive colon, lowercase drive)."""
+    return Path(url2pathname(urlparse(uri).path)).resolve()
 
 
 def workspace_root(target: Path) -> Path:
@@ -250,7 +293,7 @@ def reference_sources(refs: object, root: Path) -> list[ReferenceSource]:
         uri = ref.get("uri")
         if not isinstance(uri, str):
             continue
-        path = Path(url2pathname(urlparse(uri).path))
+        path = path_from_uri(uri)
         per_file[str(path.relative_to(root) if path.is_relative_to(root) else path)] += 1
     return [ReferenceSource(file, n) for file, n in sorted(per_file.items(), key=lambda kv: (-kv[1], kv[0]))]
 
@@ -291,7 +334,7 @@ def main() -> None:
         "paths",
         type=Path,
         nargs="*",
-        help="Python files or directories inside root whose symbols get counted (default: all)",
+        help="Python files or directories whose symbols get counted, relative to root (default: all)",
     )
     parser.add_argument(
         "--zero-only", action="store_true", help="show only symbols with zero references"
@@ -299,27 +342,29 @@ def main() -> None:
     parser.add_argument(
         "--json", action="store_true", dest="as_json", help="emit JSON instead of a table"
     )
+    parser.add_argument(
+        "--timeout",
+        type=float,
+        default=120.0,
+        help="seconds to wait for any single language server message before failing (default: 120)",
+    )
     args = parser.parse_args()
     root: Path = args.root.resolve()
     if not root.is_dir():
         parser.error(f"{root} is not a directory")
-    targets: list[Path] = [p.resolve() for p in args.paths] or [root]
+    targets: list[Path] = [(root / p).resolve() for p in args.paths] or [root]
     for target in targets:
         problem = target_problem(root, target)
         if problem is not None:
             parser.error(problem)
 
-    srv = LspServer(
-        subprocess.Popen(
-            [language_server_command(), "--stdio"],
-            stdin=subprocess.PIPE,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.DEVNULL,
-        )
-    )
-    srv.initialize(workspace_root(root))
-    results = count_references(srv, root, targets)
-    srv.shutdown()
+    srv = LspServer.start(language_server_command(), timeout=args.timeout)
+    try:
+        srv.initialize(workspace_root(root))
+        results = count_references(srv, root, targets)
+        srv.shutdown()
+    finally:
+        srv.proc.kill()
 
     shown = [r for r in results if r.references == 0] if args.zero_only else results
     if args.as_json:
@@ -332,4 +377,8 @@ def main() -> None:
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except (OSError, ValueError, TypeError, RuntimeError) as exc:
+        print(f"refcount: {type(exc).__name__}: {exc}", file=sys.stderr)
+        sys.exit(1)
