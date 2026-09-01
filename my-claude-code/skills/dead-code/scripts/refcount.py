@@ -21,12 +21,11 @@ import shutil
 import subprocess
 import sys
 import threading
-from collections import Counter
+from collections import Counter, deque
 from dataclasses import asdict, dataclass, field
 from itertools import count
 from pathlib import Path
-from urllib.parse import urlparse
-from urllib.request import url2pathname
+from urllib.parse import unquote, urlparse
 
 
 @dataclass(frozen=True)
@@ -59,21 +58,30 @@ class SymbolReferences:
 class LspServer:
     proc: subprocess.Popen[bytes]
     timeout: float
+    debug: bool
     request_ids: count[int] = field(default_factory=lambda: count(1))
     workspace_scanned: bool = False
     inbox: queue.Queue[dict[str, object] | Exception | None] = field(default_factory=queue.Queue)
+    recent: deque[str] = field(default_factory=lambda: deque(maxlen=10))
 
     @classmethod
-    def start(cls, command: str, timeout: float) -> LspServer:
+    def start(cls, command: str, timeout: float, debug: bool) -> LspServer:
         proc = subprocess.Popen(
             [command, "--stdio"],
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
-            stderr=subprocess.DEVNULL,
+            stderr=None if debug else subprocess.DEVNULL,
         )
-        srv = cls(proc, timeout)
+        srv = cls(proc, timeout, debug)
         threading.Thread(target=srv.pump_messages, daemon=True).start()
         return srv
+
+    def trace(self, direction: str, message: dict[str, object]) -> None:
+        summary = summarize(message)
+        if direction == "<-":
+            self.recent.append(summary)
+        if self.debug:
+            print(f"refcount {direction} {summary}", file=sys.stderr)
 
     def pump_messages(self) -> None:
         """Reader thread: move every server message into the inbox; None marks the end of the stream."""
@@ -88,6 +96,7 @@ class LspServer:
         if self.proc.stdin is None:
             raise RuntimeError("language server stdin is closed")
         raw = json.dumps(msg).encode()
+        self.trace("->", msg)
         self.proc.stdin.writelines([f"Content-Length: {len(raw)}\r\n\r\n".encode(), raw])
         self.proc.stdin.flush()
 
@@ -113,22 +122,25 @@ class LspServer:
             raise TypeError("language server sent a non-object message")
         return message
 
-    def read(self) -> dict[str, object]:
+    def read(self, waiting_for: str) -> dict[str, object]:
         try:
             message = self.inbox.get(timeout=self.timeout)
         except queue.Empty:
-            raise TimeoutError(f"no message from language server in {self.timeout:g}s") from None
+            history = "; ".join(self.recent) or "nothing"
+            detail = f"waiting for {waiting_for}. Last received: {history}"
+            raise TimeoutError(f"no message from language server in {self.timeout:g}s while {detail}") from None
         if message is None:
-            raise RuntimeError("language server closed the connection")
+            raise RuntimeError(f"language server closed the connection while waiting for {waiting_for}")
         if isinstance(message, Exception):
             raise message
+        self.trace("<-", message)
         return message
 
     def request(self, method: str, params: object) -> object:
         req_id = next(self.request_ids)
         self.write_message({"jsonrpc": "2.0", "method": method, "params": params, "id": req_id})
         while True:
-            match self.read():
+            match self.read(f"the {method} response (id {req_id})"):
                 case {"id": rid, "result": result} if rid == req_id:
                     return result
                 case {"id": rid, "error": err} if rid == req_id:
@@ -138,7 +150,7 @@ class LspServer:
 
     def wait_for_diagnostics(self, path: Path) -> None:
         while True:
-            match self.read():
+            match self.read(f"publishDiagnostics for {path}"):
                 case {"method": "textDocument/publishDiagnostics", "params": {"uri": str(u)}} if (
                     path_from_uri(u) == path
                 ):
@@ -194,9 +206,29 @@ class LspServer:
         self.notify("exit", None)
 
 
+def summarize(message: dict[str, object]) -> str:
+    """One line per JSON-RPC message: method or id, plus the document URI when there is one."""
+    head = str(message.get("method") or f"response #{message.get('id')}")
+    if "error" in message:
+        head = f"error #{message.get('id')}: {message['error']}"
+    params = message.get("params")
+    if not isinstance(params, dict):
+        return head
+    if isinstance(params.get("message"), str):
+        return f"{head}: {params['message']}"
+    uri = params.get("uri")
+    if not isinstance(uri, str):
+        text_document = params.get("textDocument")
+        uri = text_document.get("uri") if isinstance(text_document, dict) else None
+    return f"{head} {uri}" if isinstance(uri, str) else head
+
+
 def path_from_uri(uri: str) -> Path:
-    """Decode a file URI the way the server spells it (percent-encoded drive colon, lowercase drive)."""
-    return Path(url2pathname(urlparse(uri).path)).resolve()
+    """Decode a file URI; the server spells a Windows drive as /c%3A/ where Path.as_uri gives /C:/."""
+    path = unquote(urlparse(uri).path)
+    if len(path) > 2 and path[0] == "/" and path[2] == ":":
+        path = path[1:]
+    return Path(path)
 
 
 def workspace_root(target: Path) -> Path:
@@ -213,9 +245,10 @@ def workspace_root(target: Path) -> Path:
 
 def language_server_command() -> str:
     """Resolve basedpyright-langserver, preferring the copy uv installed alongside this interpreter."""
-    bundled = Path(sys.executable).parent / "basedpyright-langserver"
-    if bundled.exists():
-        return str(bundled)
+    bin_dir = Path(sys.executable).parent
+    for bundled in (bin_dir / "basedpyright-langserver", bin_dir / "basedpyright-langserver.exe"):
+        if bundled.exists():
+            return str(bundled)
     on_path = shutil.which("basedpyright-langserver")
     if on_path is None:
         raise RuntimeError("basedpyright-langserver not found; run this script with uv run")
@@ -348,6 +381,11 @@ def main() -> None:
         default=120.0,
         help="seconds to wait for any single language server message before failing (default: 120)",
     )
+    parser.add_argument(
+        "--debug",
+        action="store_true",
+        help="trace every message to stderr and pass the language server's stderr through",
+    )
     args = parser.parse_args()
     root: Path = args.root.resolve()
     if not root.is_dir():
@@ -358,7 +396,7 @@ def main() -> None:
         if problem is not None:
             parser.error(problem)
 
-    srv = LspServer.start(language_server_command(), timeout=args.timeout)
+    srv = LspServer.start(language_server_command(), timeout=args.timeout, debug=args.debug)
     try:
         srv.initialize(workspace_root(root))
         results = count_references(srv, root, targets)
