@@ -21,7 +21,7 @@ Starts basedpyright's language server over the target, collects every module-lev
 Run with the Bash tool:
 
 ```bash
-uv run "${CLAUDE_SKILL_DIR}/scripts/refcount.py" "<PATH>" --zero-only
+uv run "${CLAUDE_SKILL_DIR}/scripts/refcount.py" "<PROJECT_ROOT>" [<PATH> ...] --zero-only
 ```
 
 `uv` resolves basedpyright automatically on first run; no setup needed.
@@ -31,27 +31,32 @@ Options:
 - `--zero-only` — only symbols with zero references. The default for dead-code hunting; omit it when the question is how much a symbol is used rather than whether.
 - `--json` — structured output instead of the table.
 
-The path controls which symbols get counted; references to them are searched project-wide regardless. When the path lands inside a package, the script ascends to the package's parent for the search scope, since imports only resolve from there — a package detected by its `__init__.py` files, so a namespace package needs the parent passed explicitly. Code outside that resolved scope contributes no references.
+The project root is where references are searched; the language server is rooted there, so it picks up the project's basedpyright config and a `src` directory. When the root lands inside a package, the script ascends to the package's parent for the search scope, since imports only resolve from there — a package detected by its `__init__.py` files, so a namespace package needs the parent passed explicitly. Code outside that resolved scope contributes no references.
 
-Point the path at the production code, not the repo root: scanning a whole repo counts test functions and scripts as candidate symbols, and every pytest test reads 0 because nothing references tests.
+The optional paths — Python files or directories inside the root — control which symbols get counted; with none given, every file under the root is counted. Output paths are relative to the root.
 
-<critical>Every symbol costs one references request, so runtime scales with symbol count. Scoping the path to a package or module cuts the symbols counted, not the reference search, and is safe.</critical>
+Pass the production package or module as a path rather than counting the whole root: scanning a whole repo counts test functions and scripts as candidate symbols, and every pytest test reads 0 because nothing references tests.
+
+<critical>Every symbol costs one references request, so runtime scales with symbol count. Narrowing the paths to a package or module cuts the symbols counted, not the reference search, and is safe.</critical>
 
 ## Output
 
-One line per symbol, fewest references first:
+One line per symbol, fewest references first, followed by the files the references come from with a per-file count:
 
 ```
    0  function  build_legacy_index  (search/index.py:41)
    0  class     LegacyExporter  (export/exporter.py:60)
-   2  class     Exporter  (export/exporter.py:12)
+   2  class     Exporter  (export/exporter.py:12)  <- tests/test_exporter.py (2)
+   5  function  load_config  (config.py:8)  <- app.py (3), tests/test_config.py (2)
 ```
+
+In JSON the same appears as `referenced_from`, a list of `{file, count}`.
 
 ## Reading the Results
 
 Zero references is a candidate, not a verdict — in both directions.
 
-A nonzero count can still be dead: the count does not distinguish where references come from, so a symbol referenced only by its own tests reads as alive while nothing actually uses it. For low-count symbols, check whether the references are all tests before pronouncing them alive. The script cannot make this split itself — what counts as a test is a per-repo naming convention only you can see.
+A nonzero count can still be dead: a symbol referenced only by its own tests reads as alive while nothing actually uses it. The source files after `<-` make this visible — when every source is a test file, the symbol is a candidate. What counts as a test is a per-repo naming convention; the script lists the files and you make the call.
 
 A zero can still be alive. Before calling a symbol dead, rule out:
 

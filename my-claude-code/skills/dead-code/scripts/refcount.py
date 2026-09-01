@@ -6,7 +6,10 @@
 
 Symbols with zero references are dead-code candidates.
 
-Usage: uv run refcount.py <project_root> [--zero-only] [--json]
+Usage: uv run refcount.py <project_root> [<path> ...] [--zero-only] [--json]
+
+Each optional path is a Python file or directory inside the project root; when
+given, only their symbols are counted. References are searched project-wide.
 """
 
 from __future__ import annotations
@@ -16,9 +19,12 @@ import json
 import shutil
 import subprocess
 import sys
+from collections import Counter
 from dataclasses import asdict, dataclass, field
 from itertools import count
 from pathlib import Path
+from urllib.parse import urlparse
+from urllib.request import url2pathname
 
 
 @dataclass(frozen=True)
@@ -32,18 +38,26 @@ class CountableSymbol:
 
 
 @dataclass(frozen=True)
+class ReferenceSource:
+    file: str
+    count: int
+
+
+@dataclass(frozen=True)
 class SymbolReferences:
     file: str
     line: int
     kind: str
     symbol: str
     references: int
+    referenced_from: list[ReferenceSource]
 
 
 @dataclass
 class LspServer:
     proc: subprocess.Popen[bytes]
     request_ids: count[int] = field(default_factory=lambda: count(1))
+    workspace_scanned: bool = False
 
     def write_message(self, msg: dict[str, object]) -> None:
         if self.proc.stdin is None:
@@ -85,6 +99,37 @@ class LspServer:
                     raise RuntimeError(f"{method}: {err}")
                 case _:
                     continue  # server notifications, diagnostics, logs
+
+    def wait_for_diagnostics(self, uri: str) -> None:
+        while True:
+            match self.read():
+                case {"method": "textDocument/publishDiagnostics", "params": {"uri": str(u)}} if u == uri:
+                    return
+                case _:
+                    continue
+
+    def open_document(self, path: Path) -> str:
+        """Open path on the server and return its URI.
+
+        The first open waits for diagnostics: the server scans the workspace on a timer
+        after initialize, and references requested before that scan find nothing.
+        """
+        uri = path.as_uri()
+        self.notify(
+            "textDocument/didOpen",
+            {
+                "textDocument": {
+                    "uri": uri,
+                    "languageId": "python",
+                    "version": 1,
+                    "text": path.read_text(encoding="utf-8"),
+                }
+            },
+        )
+        if not self.workspace_scanned:
+            self.wait_for_diagnostics(uri)
+            self.workspace_scanned = True
+        return uri
 
     def initialize(self, root: Path) -> None:
         result = self.request(
@@ -172,32 +217,50 @@ def countable_symbols(symbols: object, kind_labels: dict[int, str]) -> list[Coun
     return out
 
 
-def project_files(root: Path) -> list[Path]:
+def target_problem(root: Path, target: Path) -> str | None:
+    if not target.is_relative_to(root):
+        return f"{target} is outside {root}"
+    if not target.exists():
+        return f"{target} does not exist"
+    if target.is_file() and target.suffix != ".py":
+        return f"{target} is not a Python file"
+    return None
+
+
+def python_files(targets: list[Path]) -> list[Path]:
     skipped = {"node_modules", "__pycache__"}
-    return [
-        p
-        for p in sorted(root.rglob("*.py"))
-        if not any(part.startswith(".") or part in skipped for part in p.parts)
-    ]
+    found: set[Path] = set()
+    for target in targets:
+        candidates = [target] if target.is_file() else target.rglob("*.py")
+        found.update(
+            p
+            for p in candidates
+            if not any(part.startswith(".") or part in skipped for part in p.parts)
+        )
+    return sorted(found)
 
 
-def count_references(srv: LspServer, target: Path) -> list[SymbolReferences]:
+def reference_sources(refs: object, root: Path) -> list[ReferenceSource]:
+    per_file: Counter[str] = Counter()
+    if not isinstance(refs, list):
+        return []
+    for ref in refs:
+        if not isinstance(ref, dict):
+            continue
+        uri = ref.get("uri")
+        if not isinstance(uri, str):
+            continue
+        path = Path(url2pathname(urlparse(uri).path))
+        per_file[str(path.relative_to(root) if path.is_relative_to(root) else path)] += 1
+    return [ReferenceSource(file, n) for file, n in sorted(per_file.items(), key=lambda kv: (-kv[1], kv[0]))]
+
+
+def count_references(srv: LspServer, root: Path, targets: list[Path]) -> list[SymbolReferences]:
     # LSP SymbolKind values worth counting
     kind_labels = {5: "class", 12: "function", 13: "variable", 14: "constant"}
     results: list[SymbolReferences] = []
-    for path in project_files(target):
-        uri = path.as_uri()
-        srv.notify(
-            "textDocument/didOpen",
-            {
-                "textDocument": {
-                    "uri": uri,
-                    "languageId": "python",
-                    "version": 1,
-                    "text": path.read_text(),
-                }
-            },
-        )
+    for path in python_files(targets):
+        uri = srv.open_document(path)
         symbols = srv.request("textDocument/documentSymbol", {"textDocument": {"uri": uri}})
         for sym in countable_symbols(symbols, kind_labels):
             refs = srv.request(
@@ -210,11 +273,12 @@ def count_references(srv: LspServer, target: Path) -> list[SymbolReferences]:
             )
             results.append(
                 SymbolReferences(
-                    file=str(path.relative_to(target)),
+                    file=str(path.relative_to(root)),
                     line=sym.line + 1,
                     kind=sym.kind,
                     symbol=sym.name,
                     references=len(refs) if isinstance(refs, list) else 0,
+                    referenced_from=reference_sources(refs, root),
                 )
             )
     return results
@@ -222,7 +286,13 @@ def count_references(srv: LspServer, target: Path) -> list[SymbolReferences]:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("root", type=Path, help="project root to analyze")
+    parser.add_argument("root", type=Path, help="project root; references are searched here")
+    parser.add_argument(
+        "paths",
+        type=Path,
+        nargs="*",
+        help="Python files or directories inside root whose symbols get counted (default: all)",
+    )
     parser.add_argument(
         "--zero-only", action="store_true", help="show only symbols with zero references"
     )
@@ -230,9 +300,14 @@ def main() -> None:
         "--json", action="store_true", dest="as_json", help="emit JSON instead of a table"
     )
     args = parser.parse_args()
-    target = args.root.resolve()
-    if not target.is_dir():
-        parser.error(f"{target} is not a directory")
+    root: Path = args.root.resolve()
+    if not root.is_dir():
+        parser.error(f"{root} is not a directory")
+    targets: list[Path] = [p.resolve() for p in args.paths] or [root]
+    for target in targets:
+        problem = target_problem(root, target)
+        if problem is not None:
+            parser.error(problem)
 
     srv = LspServer(
         subprocess.Popen(
@@ -242,8 +317,8 @@ def main() -> None:
             stderr=subprocess.DEVNULL,
         )
     )
-    srv.initialize(workspace_root(target))
-    results = count_references(srv, target)
+    srv.initialize(workspace_root(root))
+    results = count_references(srv, root, targets)
     srv.shutdown()
 
     shown = [r for r in results if r.references == 0] if args.zero_only else results
@@ -251,7 +326,9 @@ def main() -> None:
         print(json.dumps([asdict(r) for r in shown], indent=2))
         return
     for r in sorted(shown, key=lambda r: r.references):
-        print(f"{r.references:>4}  {r.kind:<8} {r.symbol}  ({r.file}:{r.line})")
+        sources = ", ".join(f"{s.file} ({s.count})" for s in r.referenced_from)
+        suffix = f"  <- {sources}" if sources else ""
+        print(f"{r.references:>4}  {r.kind:<8} {r.symbol}  ({r.file}:{r.line}){suffix}")
 
 
 if __name__ == "__main__":
