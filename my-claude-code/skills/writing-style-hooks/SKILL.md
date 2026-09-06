@@ -1,7 +1,7 @@
 ---
 name: writing-style-hooks
 description: Install, uninstall, or check the status of the writing-style hooks that enforce the user's banned-word list. Use when the user asks to set up, remove, or inspect writing-style hooks, or to add or remove banned words.
-argument-hint: [install | uninstall | status | test | add <word> | remove <word>]
+argument-hint: [install | uninstall | status | test | add <word or phrase> | remove <word or phrase>]
 allowed-tools: Bash, Write
 disable-model-invocation: true
 ---
@@ -51,7 +51,7 @@ Report installed when `~/.claude/settings.json` has both a `SessionStart` entry 
 
 ## Add or remove words
 
-Append or delete only the words named in the word list, one per line, lower case. Do not reorder or reformat the rest of the file. No hook changes are needed; the scripts read the file on every event.
+Append or delete only the entries the user names in the word list, one per line, lower case. An entry may be a single word or a literal phrase with single spaces between words; no wildcards or regex. Do not reorder or reformat the rest of the file. No hook changes are needed; the scripts read the file on every event.
 
 ## Scripts
 
