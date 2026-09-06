@@ -24,12 +24,6 @@ User said (optional note)
 - Did you speak like an engineer, or a story teller?
 - Or did you use banned words?
 
-### Banned Words
-
-*Applies to all morphologies*
-
-load-bearing, plainly, quietly, refusal, survived, re-derived, halves, asserted, nobody, genuine, honest, deliberate, premise, ruling, lands, nothing, provably, judged, lever, seam, mint, remedy, predates, reach, bites, faithful, surfaced, latent 
-
 ### What to do now
 
 - Easy. Restate it.
