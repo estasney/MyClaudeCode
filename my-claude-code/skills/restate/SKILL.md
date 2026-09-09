@@ -22,12 +22,11 @@ User said (optional note)
 - Did you use negative parallelism? E.g. It's not X it's Y
 - Did you use summarize too much but inventing concept labels? E.g. "The append-else-next pipe is broken." 
 - Did you speak like an engineer, or a story teller?
-- Or did you use banned words?
 
 ### What to do now
 
 - Easy. Restate it.
 - Don't mention this skill, or that you will resolve to do better. Just restate.
 - Don't write any memories regarding "communication style". Just restate.
-- Can you restate using two sentences? How about one?
+- Can you restate using a single sentence? Do so, avoiding semicolons, colons, em-dashes.  
 
