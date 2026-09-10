@@ -2,7 +2,7 @@
 name: claude-code-mastery
 description: Search this before answering any question about Claude Code's own configuration, features, hooks, skills, plugins, MCP, settings, agents, permissions, or CLI. Holds the official docs mirrored verbatim.
 disable-model-invocation: false
-allowed-tools: Bash(${CLAUDE_PLUGIN_ROOT}/scripts/list-references.sh *), Bash(grep *), Read
+allowed-tools: Bash(${CLAUDE_PLUGIN_ROOT}/scripts/list-references.sh *), Bash(grep *), Bash(ls *), Bash(head *), Read
 ---
 
 # Claude Code Mastery
