@@ -20,7 +20,7 @@ Each routine can have one or more triggers attached to it:
 
 A single routine can combine triggers. For example, a PR review routine can run nightly, trigger from a deploy script, and also react to every new PR.
 
-Routines are available on Pro, Max, Team, and Enterprise plans with [Claude Code on the web](/docs/en/claude-code-on-the-web) enabled. Create and manage them at [claude.ai/code/routines](https://claude.ai/code/routines), or from the CLI with `/schedule`.
+Routines are available on Pro, Max, Team, and Enterprise plans. Create and manage them at [claude.ai/code/routines](https://claude.ai/code/routines), or from the CLI with `/schedule`.
 
 Team and Enterprise Owners can disable routines for all members with the Routines toggle at [claude.ai/admin-settings/claude-code](https://claude.ai/admin-settings/claude-code). When disabled, existing routines stop running and members cannot create new ones.
 
@@ -44,7 +44,7 @@ Each example pairs a trigger type with the kind of work routines are suited to: 
 
 ## Create a routine
 
-Create a routine from the web at [claude.ai/code/routines](https://claude.ai/code/routines), from the Desktop app, or from the CLI. All three surfaces write to the same cloud account, so a routine you create in one shows up in the others immediately. In the Desktop app, click **Routines** in the sidebar, then **New routine**, and choose **Cloud**; choosing **Local** instead creates a [Desktop scheduled task](/docs/en/desktop-scheduled-tasks), which runs on your machine rather than in the cloud.
+Create a routine from the web at [claude.ai/code/routines](https://claude.ai/code/routines), from the Desktop app, or from the CLI. All three surfaces write to the same cloud account, so a routine you create in one shows up in the others immediately. In the Desktop app's **Code** tab, click **Routines** in the sidebar or in the sidebar's **More** menu, then **New routine**, and choose **Cloud**; choosing **Local** instead creates a [Desktop scheduled task](/docs/en/desktop-scheduled-tasks), which runs on your machine rather than in the cloud.
 
 The creation form sets up the routine's prompt, repositories, environment, connectors, and triggers.
 
@@ -75,7 +75,7 @@ Routines belong to your individual claude.ai account. They are not shared with t
     Pick a [cloud environment](/docs/en/cloud-environments) for the routine. Environments control what the cloud session has access to:
 
     * **Network access**: set the level of internet access available during each run
-    * **Environment variables**: provide values Claude can use during each run. They're [visible to anyone who uses the environment](/docs/en/cloud-environments#what-carries-over-from-your-setup), so add credentials with that in mind
+    * **Environment variables**: provide values Claude can use during each run. They're [visible to anyone who uses the environment](/docs/en/cloud-environments#what-carries-over-from-your-setup), so on Pro and Max plans, store keys for the APIs Claude calls during a run as [API credentials](/docs/en/cloud-environments#add-api-credentials) instead. That section also lists the requests that never get a credential
     * **Setup script**: install dependencies and tools the routine needs. The result is [cached](/docs/en/cloud-environments#environment-caching), so the script doesn't re-run on every session
 
     A **Default** environment is provided with **Trusted** network access, which allows only the [default allowlist](/docs/en/cloud-environments#default-allowed-domains) of package registries, cloud provider APIs, container registries, and common development domains through the session's network. Connectors you add to the routine reach their services through Anthropic's servers, so they don't need allowlist changes. If your routine needs to reach your own services directly, or a domain outside that list, edit the environment's [network access](/docs/en/cloud-environments#network-access) before running. To use a separate environment, [create one](/docs/en/cloud-environments#configure-your-environment) first.
@@ -135,10 +135,6 @@ For a custom interval such as every two hours or the first of each month, pick t
 #### Schedule a one-off run
 
 A one-off schedule fires the routine a single time at a specific timestamp. Use it to remind yourself later in the week, to open a cleanup PR after a rollout finishes, or to kick off a follow-up task when an upstream change lands. After the routine fires, it auto-disables and the web UI marks it as **Ran**. To run it again, edit the routine and set a new one-off time.
-
-<Note>
-  One-off scheduling from the CLI is rolling out gradually and may not be available on your account yet. If `/schedule` only offers recurring schedules, create the one-off run from the web at [claude.ai/code/routines](https://claude.ai/code/routines) instead.
-</Note>
 
 Create a one-off run from the CLI by describing the time in natural language. Claude resolves the phrase against the current time and confirms the absolute timestamp before saving.
 
@@ -315,7 +311,7 @@ You can also ask about a routine's run history, for example `/schedule why did m
 
 ### Repositories and branch permissions
 
-Routines need GitHub access to clone repositories. When you create a routine from the CLI with `/schedule`, Claude checks whether your account has GitHub connected and prompts you to run `/web-setup` if it doesn't. See [GitHub authentication options](/docs/en/claude-code-on-the-web#github-authentication-options) for the two ways to grant access.
+Routines need GitHub access to clone repositories. When you create a routine from the CLI with `/schedule`, Claude checks whether your account has GitHub access for the repository you ran it from and, if it doesn't, adds a setup note naming how to grant it. See [GitHub authentication options](/docs/en/claude-code-on-the-web#github-authentication-options) for the two ways to grant access.
 
 Each repository you add is cloned on every run. Claude starts from the repository's default branch unless your prompt specifies otherwise.
 
@@ -377,12 +373,13 @@ One-off runs do not count against the daily routine cap. They draw down your reg
 
 ## Troubleshooting
 
-### `/schedule` returns "Unknown command"
+<h3 id="schedule-returns-unknown-command">
+  `/schedule` returns "Unknown command"
+</h3>
 
 The CLI hides `/schedule` when one of its requirements isn't met: the command menu shows `No commands match "/schedule"` while you type, and submitting it returns `Unknown command: /schedule` in every case below except a Console API key or an Anthropic profile with feature-flag fetching enabled. The cause is usually one of the following:
 
 * You are authenticated with a Console API key, an [Anthropic profile or federation credential](/docs/en/authentication#anthropic-profiles-and-federation-credentials), or a cloud provider such as Amazon Bedrock, Google Cloud's Agent Platform, or Microsoft Foundry. `/schedule` requires a claude.ai subscription login. With a Console API key or a profile, submitting `/schedule` instead shows `/schedule is available with Claude for Enterprise — ask your admin about migrating from API-key access`. With a cloud-provider login, you still see `Unknown command: /schedule`. If `ANTHROPIC_API_KEY` or `ANTHROPIC_AUTH_TOKEN` is set in your shell, or `apiKeyHelper` is set in `settings.json`, remove it first, since these take precedence over a claude.ai login. A profile or federation credential takes precedence too, so switch that off as well
-* `DISABLE_TELEMETRY`, `DO_NOT_TRACK`, `CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC`, or `DISABLE_GROWTHBOOK` is set in your shell environment or in the `env` block of a [`settings.json` file](/docs/en/settings#available-settings). These disable feature-flag fetching, which `/schedule` depends on
 * You are inside a Claude Code on the web session. Manage routines from the [web UI](https://claude.ai/code/routines) instead
 * Your organization's policy disables [Claude Code on the web](/docs/en/claude-code-on-the-web), which routines run on
 * An Owner [turned off routines](#routines-are-disabled-by-your-organizations-policy) for your Team or Enterprise organization. Before v2.1.227, the command still appeared in this case, and claude.ai rejected the routine when Claude tried to create or run it

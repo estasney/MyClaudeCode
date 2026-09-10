@@ -15,7 +15,7 @@ Status lines are useful when you:
 * Work across multiple sessions and need to distinguish them
 * Want git branch and status always visible
 
-The status line renders in its own row above the built-in footer badges and does not replace them. With a custom status line configured, Claude Code stops showing most of the footer's keyboard hints, including `esc to interrupt`, the `? for shortcuts` fallback, and the `hold space to speak` [voice dictation](/docs/en/voice-dictation) hint. To add clickable link badges to the footer when an ID appears in the conversation, without writing a script, configure [`footerLinksRegexes`](/docs/en/settings#footer-link-badges) instead.
+The status line renders in its own row above the built-in footer badges and does not replace them. With a custom status line configured, Claude Code stops showing most of the footer's keyboard hints, including `esc to interrupt`, the `? for shortcuts` fallback, and the `hold space to speak` [voice dictation](/docs/en/voice-dictation) hint. To add clickable link badges to the footer when an ID appears in the conversation, without writing a script, configure [`footerLinksRegexes`](/docs/en/settings-reference#footerlinksregexes) instead.
 
 Here's an example of a [multi-line status line](#display-multiple-lines) that displays git info on the first line and a color-coded context bar on the second.
 
@@ -41,7 +41,7 @@ Approve the file edit prompts if Claude Code asks for permission during setup.
 
 ### Manually configure a status line
 
-Add a `statusLine` field to your user settings (`~/.claude/settings.json`, where `~` is your home directory) or [project settings](/docs/en/settings#settings-files). Set `type` to `"command"` and point `command` to a script path or an inline shell command. For a full walkthrough of creating a script, see [Build a status line step by step](#build-a-status-line-step-by-step).
+Add a `statusLine` field to your user settings (`~/.claude/settings.json`, where `~` is your home directory) or [project settings](/docs/en/settings#where-settings-live). Set `type` to `"command"` and point `command` to a script path or an inline shell command. For a full walkthrough of creating a script, see [Build a status line step by step](#build-a-status-line-step-by-step).
 
 ```json theme={null}
 {
@@ -128,13 +128,13 @@ These examples use Bash scripts, which work on macOS and Linux. On Windows, see 
     }
     ```
 
-    Your status line appears at the bottom of the interface. Settings reload automatically, but changes won't appear until your next interaction with Claude Code.
+    Your status line appears at the bottom of the interface. Claude Code reloads settings automatically and runs your script as soon as you save the file.
   </Step>
 </Steps>
 
 ## How status lines work
 
-Claude Code runs your script and pipes [JSON session data](#available-data) to it via stdin. Your script reads the JSON, extracts what it needs, and prints text to stdout. Claude Code displays whatever your script prints.
+Claude Code runs your script with [JSON session data](#available-data) on stdin and displays whatever the script prints to stdout.
 
 **When it updates**
 
@@ -144,9 +144,12 @@ Your script runs once when a session starts, including when you resume one. Afte
 * `/compact` finishes
 * The permission mode changes
 * Vim mode toggles
+* You change the `command` in your `statusLine` settings
 * A [`refreshInterval`](#manually-configure-a-status-line) timer elapses, if you set one
+* A [rate-limit window](#rate-limit-usage) in the data your script last received reaches its `resets_at` time
+* A warm [prompt cache](#prompt-cache-fields) in the data your script last received reaches its `expires_at` time
 
-Claude Code debounces updates at 300ms, so rapid changes batch together and your script runs once after the changes stop. If a new update triggers while your script is still running, Claude Code cancels the in-flight script. If you edit your script, the changes appear the next time an update trigger re-runs it.
+Claude Code debounces updates at 300ms, so rapid changes batch together and your script runs once after the changes stop. A change to the `command` itself skips the debounce: Claude Code runs the new command right away. If a new update triggers while your script is still running, Claude Code cancels the in-flight script. If you edit your script, the changes appear the next time an update trigger re-runs it.
 
 The event-driven triggers can go quiet when the main session is idle, for example while a coordinator waits on background subagents. To keep time-based or externally-sourced segments current during idle periods, set [`refreshInterval`](#manually-configure-a-status-line) to also re-run the command on a fixed timer.
 
@@ -158,7 +161,7 @@ The event-driven triggers can go quiet when the main session is idle, for exampl
 
 **Sizing output to the terminal**
 
-Claude Code captures your script's output instead of connecting it directly to the terminal, so `tput cols` and language-level width detection cannot read the terminal size from inside the script. Read the `COLUMNS` and `LINES` environment variables instead. Claude Code sets these to the current terminal dimensions before running your script. Requires Claude Code v2.1.153 or later.
+Claude Code captures your script's output instead of connecting it directly to the terminal, so `tput cols` and language-level width detection cannot read the terminal size from inside the script. Read the `COLUMNS` and `LINES` environment variables instead. Claude Code sets these to the current terminal dimensions before running your script.
 
 <Note>The status line runs locally and does not consume API tokens. It temporarily hides during certain UI interactions, including autocomplete suggestions, the help menu, and permission prompts.</Note>
 
@@ -172,9 +175,9 @@ Claude Code sends the following JSON fields to your script via stdin:
 | `cwd`, `workspace.current_dir`                                                   | Current working directory. Both fields contain the same value; `workspace.current_dir` is preferred for consistency with `workspace.project_dir`.                                                                                                                                                                                                                                                                                                                      |
 | `workspace.project_dir`                                                          | Directory where Claude Code was launched, which may differ from `cwd` if the working directory changes during a session                                                                                                                                                                                                                                                                                                                                                |
 | `workspace.added_dirs`                                                           | Additional directories added via `/add-dir` or `--add-dir`. Empty array if none have been added                                                                                                                                                                                                                                                                                                                                                                        |
-| `workspace.git_worktree`                                                         | Git worktree name when the current directory is inside a linked worktree created with `git worktree add`. Absent in the main working tree. Populated for any git worktree, unlike `worktree.*` which applies only to `--worktree` sessions                                                                                                                                                                                                                             |
-| `workspace.repo.host`, `workspace.repo.owner`, `workspace.repo.name`             | Repository identity parsed from the `origin` remote, for example `"github.com"`, `"anthropics"`, `"claude-code"`. Absent outside a git repository or when no `origin` remote is configured                                                                                                                                                                                                                                                                             |
-| `cost.total_cost_usd`                                                            | Estimated session cost in USD, computed client-side. May differ from your actual bill. Resets to \$0 when `/clear` starts a new session                                                                                                                                                                                                                                                                                                                                |
+| `workspace.git_worktree`                                                         | Git worktree name when the current directory is inside a linked worktree created with `git worktree add`. Absent in the main working tree. Populated for any git worktree, unlike `worktree.*`, which is present only while the session is in a [worktree session](/docs/en/worktrees)                                                                                                                                                                                      |
+| `workspace.repo.host`, `workspace.repo.owner`, `workspace.repo.name`             | Repository identity parsed from the `origin` remote, for example, `"github.com"`, `"anthropics"`, `"claude-code"`. Absent outside a git repository or when no `origin` remote is configured. For a gitlab.com project nested in subgroups, `owner` is the full namespace path with slashes, such as `"group/subgroup"`. Before v2.1.260, `workspace.repo` was absent for these projects                                                                                |
+| `cost.total_cost_usd`                                                            | Estimated session cost in USD, computed client-side at list price unless a [`modelPricing`](/docs/en/settings-reference#modelpricing) table is in effect. May differ from your actual bill. Resets to \$0 when `/clear` starts a new session. Before v2.1.211, the total carried over after `/clear`                                                                                                                                                                        |
 | `cost.total_duration_ms`                                                         | Total wall-clock time since the session started, in milliseconds                                                                                                                                                                                                                                                                                                                                                                                                       |
 | `cost.total_api_duration_ms`                                                     | Total time spent waiting for API responses in milliseconds                                                                                                                                                                                                                                                                                                                                                                                                             |
 | `cost.total_lines_added`, `cost.total_lines_removed`                             | Lines of code changed                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
@@ -189,6 +192,8 @@ Claude Code sends the following JSON fields to your script via stdin:
 | `thinking.enabled`                                                               | Whether extended thinking is enabled for the session                                                                                                                                                                                                                                                                                                                                                                                                                   |
 | `rate_limits.five_hour.used_percentage`, `rate_limits.seven_day.used_percentage` | Percentage of the 5-hour or 7-day rate limit consumed, from 0 to 100                                                                                                                                                                                                                                                                                                                                                                                                   |
 | `rate_limits.five_hour.resets_at`, `rate_limits.seven_day.resets_at`             | Unix epoch seconds when the 5-hour or 7-day rate limit window resets                                                                                                                                                                                                                                                                                                                                                                                                   |
+| `rate_limits.spend_limit.used_percentage`, `rate_limits.spend_limit.resets_at`   | Behind a [Claude apps gateway](/docs/en/claude-apps-gateway-spend-limits#usage-warnings-in-claude-code), the percentage used of the spend limit that applies to you, and the Unix epoch seconds when its period resets. The percentage runs from 0 to 100, or above 100 once you exceed the limit. Requires Claude Code v2.1.251 or later                                                                                                                                   |
+| `prompt_cache`                                                                   | The session's [prompt cache](/docs/en/prompt-caching) statistics for the main conversation: hit ratio, misses, and whether the cache is warm. See [prompt cache fields](#prompt-cache-fields) for every field. Absent until the main conversation's first API response. Requires Claude Code v2.1.251 or later                                                                                                                                                              |
 | `session_id`                                                                     | Unique session identifier                                                                                                                                                                                                                                                                                                                                                                                                                                              |
 | `session_name`                                                                   | Session name. Uses the custom name set with the `--name` flag or `/rename` when one exists, otherwise the AI-generated session title. The [default display name](/docs/en/sessions#name-your-sessions), such as `my-app-3f`, doesn't populate this field. Absent when the session has neither a custom name nor an AI-generated title                                                                                                                                       |
 | `prompt_id`                                                                      | UUID identifying the user prompt currently being processed. Matches the [`prompt.id` attribute on OpenTelemetry events](/docs/en/monitoring-usage#event-correlation-attributes). Absent until the first user input. Requires Claude Code v2.1.196 or later                                                                                                                                                                                                                  |
@@ -200,7 +205,7 @@ Claude Code sends the following JSON fields to your script via stdin:
 | `pr.number`, `pr.url`                                                            | Open pull request for the current branch. Mirrors the PR badge in the footer. In a repository with a GitLab remote, Claude Code fills these fields from the branch's open [merge request](/docs/en/interactive-mode#gitlab-merge-requests) instead, so `pr.number` is the merge request number. Merge request data requires Claude Code v2.1.234 or later. Absent when not in a git repository, until a pull request or merge request is found, or once it merges or closes |
 | `pr.review_state`                                                                | Review status of the open PR: `approved`, `pending`, `changes_requested`, or `draft`. May be independently absent even when `pr` is present                                                                                                                                                                                                                                                                                                                            |
 | `pr.kind`                                                                        | `mr` when `pr` describes a [GitLab merge request](/docs/en/interactive-mode#gitlab-merge-requests). Absent for GitHub pull requests, so scripts written before this field keep working. For a merge request, Claude Code sets `review_state` to `approved` when GitLab reports it mergeable, `pending` for any other open state, and `draft` for a draft. Requires Claude Code v2.1.234 or later                                                                            |
-| `worktree.name`                                                                  | Name of the active worktree. Present only during `--worktree` sessions                                                                                                                                                                                                                                                                                                                                                                                                 |
+| `worktree.name`                                                                  | Name of the active worktree. Present only while the session is in a [worktree session](/docs/en/worktrees)                                                                                                                                                                                                                                                                                                                                                                  |
 | `worktree.path`                                                                  | Absolute path to the worktree directory                                                                                                                                                                                                                                                                                                                                                                                                                                |
 | `worktree.branch`                                                                | Git branch name for the worktree (for example, `"worktree-my-feature"`). Absent for hook-based worktrees                                                                                                                                                                                                                                                                                                                                                               |
 | `worktree.original_cwd`                                                          | The directory Claude was in before entering the worktree                                                                                                                                                                                                                                                                                                                                                                                                               |
@@ -256,6 +261,28 @@ Claude Code sends the following JSON fields to your script via stdin:
       }
     },
     "exceeds_200k_tokens": false,
+    "prompt_cache": {
+      "warm": true,
+      "caching_observed": true,
+      "ttl": "1h",
+      "expires_at": 1738429200,
+      "requests": 14,
+      "misses": 2,
+      "expected_rebuilds": 1,
+      "hit_ratio": 0.91,
+      "cache_write_tokens": 352000,
+      "miss_recache_tokens": 310200,
+      "last_miss_at": 1738425230,
+      "last_miss_cause": {
+        "causes": ["tools_changed"],
+        "tools_added": 2,
+        "tools_removed": 0
+      },
+      "miss_causes": {
+        "tools_changed": 2
+      },
+      "recache_tokens_if_cold": 45000
+    },
     "fast_mode": false,
     "effort": {
       "level": "high"
@@ -271,6 +298,10 @@ Claude Code sends the following JSON fields to your script via stdin:
       "seven_day": {
         "used_percentage": 41.2,
         "resets_at": 1738857600
+      },
+      "spend_limit": {
+        "used_percentage": 62.8,
+        "resets_at": 1740787200
       }
     },
     "vim": {
@@ -304,8 +335,9 @@ Claude Code sends the following JSON fields to your script via stdin:
   * `vim`: appears only when vim mode is enabled
   * `agent`: appears only when running with the `--agent` flag or agent settings configured
   * `pr`: appears only while an open PR or GitLab merge request is found for the current branch, and is removed once it merges or closes. `pr.review_state` and `pr.kind` may be independently absent
-  * `worktree`: appears only during `--worktree` sessions. When present, `branch` and `original_branch` may also be absent for hook-based worktrees
-  * `rate_limits`: appears only for Claude.ai subscribers (Pro/Max) after the first API response in the session. Each window (`five_hour`, `seven_day`) may be independently absent. Use `jq -r '.rate_limits.five_hour.used_percentage // empty'` to handle absence gracefully.
+  * `worktree`: appears only while the session is in a [worktree session](/docs/en/worktrees). When present, `branch` and `original_branch` may also be absent for hook-based worktrees
+  * `rate_limits`: appears only for Claude.ai Pro and Max subscribers, or behind a Claude apps gateway that sets a spend limit for you, and only after the first API response in the session. Each window (`five_hour`, `seven_day`, `spend_limit`) may be independently absent, and Claude Code drops a window once its `resets_at` time passes. Use `jq -r '.rate_limits.five_hour.used_percentage // empty'` to handle absence gracefully.
+  * `prompt_cache`: appears after the main conversation's first API response. See [prompt cache fields](#prompt-cache-fields)
 
   **Fields that may be `null`**:
 
@@ -336,6 +368,44 @@ The `used_percentage` field is calculated from input tokens only: `input_tokens 
 If you calculate context percentage manually from `current_usage`, use the same input-only formula to match `used_percentage`.
 
 The `current_usage` object is `null` before the first API call in a session, and again immediately after `/compact` until the next API call repopulates it.
+
+### Prompt cache fields
+
+The `prompt_cache` object summarizes how the session's main conversation is using the [prompt cache](/docs/en/prompt-caching). Claude Code computes it from the cache token counts in the API's responses, so it works on every provider.
+
+The object appears after the main conversation's first API response. Claude Code doesn't count subagent requests in these statistics. Requires Claude Code v2.1.251 or later.
+
+The table lists each field with its meaning. Timestamps are Unix epoch seconds, the same unit as `rate_limits.*.resets_at`. A short status line usually shows one or two of these; `warm` and `hit_ratio` summarize the cache state most directly.
+
+| Field                    | Description                                                                                                                                                                                                                          |
+| ------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `warm`                   | Whether the cached prefix is still within its TTL. `false` when the last response reported no cache tokens, even while `caching_observed` is `true`                                                                                  |
+| `caching_observed`       | Whether any response this session reported cache tokens. `false` means prompt caching is off, or your provider or gateway doesn't report it                                                                                          |
+| `ttl`                    | [Cache lifetime](/docs/en/prompt-caching#cache-lifetime) of the current cached prefix: `"5m"` or `"1h"`                                                                                                                                   |
+| `expires_at`             | When the cached prefix leaves its TTL and goes cold, in epoch seconds. `null` when the last response reported no cache tokens                                                                                                        |
+| `requests`               | API requests recorded for the main conversation this session                                                                                                                                                                         |
+| `misses`                 | Requests that re-processed content the cache already held: more than 5% and at least 2,000 tokens of what the request could have read from cache, with no compaction or tool-result clearing to explain the shortfall in cache reads |
+| `expected_rebuilds`      | Cache rebuilds that followed a compaction or a clearing of old tool results                                                                                                                                                          |
+| `hit_ratio`              | Cache read tokens as a fraction of all input tokens this session, from 0 to 1. The denominator counts cache reads, cache writes, and uncached input. `null` while those counts are all zero                                          |
+| `cache_write_tokens`     | All tokens written to the cache this session, the first request's initial write included                                                                                                                                             |
+| `miss_recache_tokens`    | Tokens written to the cache by the requests counted as misses                                                                                                                                                                        |
+| `last_miss_at`           | When the last miss happened, in epoch seconds. `null` while the session has no misses                                                                                                                                                |
+| `last_miss_cause`        | What Claude Code identified as the likely cause of the last miss, described under [Last miss cause](#last-miss-cause). Requires Claude Code v2.1.260 or later                                                                        |
+| `miss_causes`            | How many of this session's diagnosed misses had each cause, keyed by the same cause names as `last_miss_cause`. Requires Claude Code v2.1.260 or later                                                                               |
+| `recache_tokens_if_cold` | Tokens the next request re-caches if the cache has gone cold by then. `null` right after a compaction or a clearing of old tool results, until the next request records the rewritten conversation's size                            |
+
+Claude Code shows the same statistics in the terminal, on the [`/usage` command's `Prompt cache (main)` line](/docs/en/costs#prompt-cache-statistics).
+
+<h4 id="last-miss-cause">
+  Last miss cause
+</h4>
+
+The `last_miss_cause` object reports what Claude Code identified as the likely cause of the most recent miss. Its `causes` array holds one or more cause names, such as `tools_changed`, `system_prompt_changed`, `ttl_expired_5m`, or `likely_server_side`. The object is `null` until the session's first miss, and again whenever Claude Code couldn't identify a cause for the most recent miss. Requires Claude Code v2.1.260 or later.
+
+Two causes add counts to the object:
+
+* `tools_added` and `tools_removed`: with `tools_changed`, how many tools were added to or removed from the request
+* `system_char_delta`: with `system_prompt_changed`, the change in the system prompt's length, in characters
 
 ## Examples
 
@@ -758,9 +828,11 @@ Each script gets the git remote URL, converts SSH format to HTTPS, and wraps the
 
 ### Rate limit usage
 
-Display Claude.ai subscription rate limit usage in the status line. The `rate_limits` object contains `five_hour` (5-hour rolling window) and `seven_day` (weekly) windows. Each window provides `used_percentage` (0-100) and `resets_at` (Unix epoch seconds when the window resets).
+Display Claude.ai subscription rate limit usage in the status line. The `rate_limits` object contains a rolling `five_hour` window and a weekly `seven_day` window. Each window provides `used_percentage`, from 0 to 100, and `resets_at`, the Unix epoch seconds when the window resets.
 
-This field is only present for Claude.ai subscribers (Pro/Max) after the first API response. Each script handles the absent field gracefully:
+Behind a Claude apps gateway with spend limits, `rate_limits` carries `spend_limit` with the same two fields for the spend limit that applies to you, except that its `used_percentage` can go above 100 once you exceed the limit. Requires Claude Code v2.1.251 or later.
+
+The `rate_limits` object is only present for Claude.ai Pro and Max subscribers, or behind a Claude apps gateway with spend limits, and only after the first API response. Each script handles the absent field gracefully:
 
 <CodeGroup>
   ```bash Bash theme={null}
@@ -1032,7 +1104,7 @@ The per-task `effort` field is the reasoning effort set for that subagent, in it
 
 Write one JSON line to stdout per row you want to override, in the form `{"id": "<task id>", "content": "<row body>"}`. The `content` string is rendered as-is, including ANSI colors and OSC 8 hyperlinks. Omit a task's `id` to keep the default rendering for that row; emit an empty `content` string to hide it.
 
-The same trust, `disableAllHooks`, and [`allowManagedHooksOnly`](/docs/en/settings#hook-configuration) gates that apply to `statusLine` apply here. Plugins can ship a default `subagentStatusLine` in their [`settings.json`](/docs/en/plugins-reference#standard-plugin-layout), but unlike hooks, plugin values don't run under `allowManagedHooksOnly` even when the plugin is force-enabled in managed settings `enabledPlugins`.
+The same trust, `disableAllHooks`, and [`allowManagedHooksOnly`](/docs/en/settings-reference#allowmanagedhooksonly) gates that apply to `statusLine` apply here. Plugins can ship a default `subagentStatusLine` in their [`settings.json`](/docs/en/plugins-reference#standard-plugin-layout), but unlike hooks, plugin values don't run under `allowManagedHooksOnly` even when the plugin is force-enabled in managed settings `enabledPlugins`.
 
 ## Tips
 
@@ -1050,8 +1122,8 @@ Community projects like [ccstatusline](https://github.com/sirmalloc/ccstatusline
 * Check that your script outputs to stdout, not stderr
 * Run your script manually to verify it produces output
 * On Windows with Git Bash installed, backslashes in the `command` path are likely being consumed as escape characters before the script runs. Use forward slashes in the path. See [Windows configuration](#windows-configuration).
-* If `disableAllHooks` is `true` outside managed settings after [settings precedence](/docs/en/hooks#disable-or-remove-hooks) applies, Claude Code runs only a `statusLine` from managed settings, and with no managed `statusLine` the status line is disabled. Remove the setting, or set it to `false` in the file that sets it, to re-enable. See [Hook configuration](/docs/en/settings#hook-configuration).
-* If your organization sets `allowManagedHooksOnly` in managed settings, your custom status line disappears without warning: you can only get a status line from a `statusLine` value in those managed settings. See [Hook configuration](/docs/en/settings#hook-configuration) for the full behavior, and ask your administrator whether this setting applies to you.
+* If `disableAllHooks` is `true` outside managed settings after [settings precedence](/docs/en/hooks#disable-or-remove-hooks) applies, Claude Code runs only a `statusLine` from managed settings, and with no managed `statusLine` the status line is disabled. Remove the setting, or set it to `false` in the file that sets it, to re-enable. See [`disableAllHooks`](/docs/en/settings-reference#disableallhooks).
+* If your organization sets `allowManagedHooksOnly` in managed settings, your custom status line disappears without warning: you can only get a status line from a `statusLine` value in those managed settings. See [what runs under `allowManagedHooksOnly`](/docs/en/settings-reference#what-runs-under-allowmanagedhooksonly) for the full behavior, and ask your administrator whether this setting applies to you.
 * Run `claude --debug` to log the exit code and stderr from the first status line invocation in a session
 * Ask Claude to read your settings file and execute the `statusLine` command directly to surface errors
 
@@ -1072,7 +1144,7 @@ Community projects like [ccstatusline](https://github.com/sirmalloc/ccstatusline
 
 * Terminal.app does not support clickable links
 
-* If link text appears but isn't clickable, Claude Code may not have detected hyperlink support in your terminal. This commonly affects Windows Terminal and other emulators not in the auto-detection list. Set the `FORCE_HYPERLINK` environment variable to override detection before launching Claude Code:
+* If link text appears but isn't clickable, Claude Code may not have detected hyperlink support in your terminal. Set the `FORCE_HYPERLINK` environment variable to override detection before launching Claude Code:
 
   ```bash theme={null}
   FORCE_HYPERLINK=1 claude
@@ -1108,6 +1180,8 @@ Community projects like [ccstatusline](https://github.com/sirmalloc/ccstatusline
 
 **Notifications share the status line row**
 
-* System notifications like MCP server errors and auto-updates display on the right side of the same row as your status line. Transient notifications such as the context-low warning also cycle through this area.
+Outside [fullscreen rendering](/docs/en/fullscreen), Claude Code shows notifications on the same row as your status line. In fullscreen rendering, Claude Code gives notifications a row of their own.
+
+* System notifications like MCP server errors and auto-updates display on the right side of the row. Transient notifications such as the context-low warning also cycle through this area.
 * Enabling verbose mode adds a token counter to this area
 * On narrow terminals, these notifications may truncate your status line output

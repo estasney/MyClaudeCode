@@ -25,7 +25,7 @@ The Claude Code plugin works with most JetBrains IDEs, including:
 * **Diff viewing**: Claude Code opens code changes in the IDE diff viewer instead of the terminal; change this with the **Diff tool** setting in `/config`
 * **Selection context**: the current selection or tab in the IDE is automatically shared with Claude Code. [`Read` deny rules](/docs/en/permissions#read-and-edit) block this sharing for matching files
 * **File reference shortcuts**: use `Cmd+Option+K` (Mac) or `Alt+Ctrl+K` (Linux/Windows) to insert file references such as `@src/auth.ts#L1-99`
-* **Diagnostic sharing**: after Claude edits a file, Claude Code pulls the IDE's new diagnostics for that file, such as lint and syntax errors, into the conversation, so Claude notices errors its edits introduce
+* **Diagnostic sharing**: Claude reads the IDE's inspection diagnostics, such as lint and syntax errors, by calling the [`getDiagnostics` tool](#the-built-in-ide-mcp-server); Claude Code doesn't request diagnostics from the plugin on its own after edits
 
 ## Installation
 
@@ -77,7 +77,7 @@ Configure IDE integration through Claude Code's settings:
 2. Enter the `/config` command
 3. Set **Diff tool** to `auto` to show diffs in the IDE, or `terminal` to keep them in the terminal
 
-The **Diff tool** entry appears in `/config` only when Claude Code is connected to the IDE, so run `claude` from the JetBrains terminal or run [`/ide`](/docs/en/commands) first from an external terminal. See [`diffTool`](/docs/en/settings#global-config-settings) for the underlying setting.
+The **Diff tool** entry appears in `/config` only when Claude Code is connected to the IDE, so run `claude` from the JetBrains terminal or run [`/ide`](/docs/en/commands) first from an external terminal. See [`diffTool`](/docs/en/settings-reference#difftool) for the underlying setting.
 
 ### Plugin settings
 
@@ -201,7 +201,7 @@ For Claude Code installation or login problems outside the IDE, see [Troubleshoo
 
 ### The built-in IDE MCP server
 
-When the plugin is active, it runs a local MCP server that the CLI connects to automatically. This is how the CLI opens diffs in the IDE's native diff viewer, reads your current selection for `@`-mentions, and pulls inspection diagnostics into the conversation.
+When the plugin is active, it runs a local MCP server that the CLI connects to automatically. This is how the CLI opens diffs in the IDE's native diff viewer, reads your current selection for `@`-mentions, and lets Claude read inspection diagnostics.
 
 The server is named `ide` and is hidden from `/mcp` because there's nothing to configure. If your organization uses a [`PreToolUse` hook](/docs/en/hooks#pretooluse) to allowlist MCP tools, though, you'll need to know it exists.
 
@@ -220,5 +220,5 @@ The JetBrains plugin does not expose a code-execution tool to the model.
 **Listening interface.** Which network interface the server binds to is controlled by **Accept connections from all network interfaces** under **Settings → Tools → Claude Code \[Beta] → Networking (Advanced)**. With the setting disabled, the server listens on `127.0.0.1` only and is not reachable from other hosts. With it enabled, the port is reachable from your local network. The setting exists for cases where the CLI cannot reach the IDE over loopback, such as WSL2 with default NAT networking or a remote-IDE setup; see [WSL configuration](#wsl-configuration) for that scenario.
 
 <Warning>
-  Enabling **Accept connections from all network interfaces** makes the IDE MCP port reachable from your local network. Connections still require the auth token from the lock file, but because the transport is unencrypted `ws://`, both the session traffic and that token cross the network in cleartext when the setting is on. Only turn it on when loopback genuinely cannot work. For WSL2, prefer [mirrored networking](#switch-wsl2-to-mirrored-networking) so the Windows loopback interface is shared with the Linux VM and the socket can stay on loopback.
+  Enabling **Accept connections from all network interfaces** makes the IDE MCP port reachable from your local network. Connections still require the auth token from the lock file, but because the transport is unencrypted `ws://`, both the session traffic and that token cross the network in cleartext when the setting is on. Only turn it on when loopback can't work. For WSL2, prefer [mirrored networking](#switch-wsl2-to-mirrored-networking) so the Windows loopback interface is shared with the Linux VM and the socket can stay on loopback.
 </Warning>

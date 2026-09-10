@@ -82,7 +82,7 @@ This example uses [Bun](https://bun.sh) as the runtime for its built-in HTTP ser
       {
         // this key is what makes it a channel — Claude Code registers a listener for it
         capabilities: { experimental: { 'claude/channel': {} } },
-        // added to Claude's system prompt so it knows how to handle these events
+        // Claude Code delivers this to Claude as context when the server connects, so it knows how to handle these events
         instructions: 'Events from the webhook channel arrive as <channel source="webhook" ...>. They are one-way: read them and act, no reply expected.',
       },
     )
@@ -112,7 +112,7 @@ This example uses [Bun](https://bun.sh) as the runtime for its built-in HTTP ser
 
     The file does three things in order:
 
-    * **Server configuration**: creates the MCP server with `claude/channel` in its capabilities, which is what tells Claude Code this is a channel. The [`instructions`](#server-options) string goes into Claude's system prompt: tell Claude what events to expect, whether to reply, and how to route replies if it should.
+    * **Server configuration**: creates the MCP server with `claude/channel` in its capabilities, which is what tells Claude Code this is a channel. Claude Code delivers the [`instructions`](#server-options) string to Claude as context when the server connects: tell Claude what events to expect, whether to reply, and how to route replies if it should.
     * **Stdio connection**: connects to Claude Code over stdin/stdout. This is standard for any [MCP server](https://modelcontextprotocol.io/docs/concepts/transports#standard-io).
     * **HTTP listener**: starts a local web server on port 8788. Every POST body gets forwarded to Claude as a channel event via `mcp.notification()`. The `content` becomes the event body, and each `meta` entry becomes an attribute on the `<channel>` tag. The listener needs access to the `mcp` instance, so it runs in the same process. You could split it into separate modules for a larger project.
   </Step>
@@ -164,7 +164,7 @@ This example uses [Bun](https://bun.sh) as the runtime for its built-in HTTP ser
 
     If the event doesn't arrive, the diagnosis depends on what `curl` returned:
 
-    * **`curl` succeeds but nothing reaches Claude**: run `/mcp` in your session to check the server's status. "Failed to connect" usually means a dependency or import error in your server file; check the debug log at `~/.claude/debug/<session-id>.txt` for the stderr trace.
+    * **`curl` succeeds but nothing reaches Claude**: run `/mcp` in your session to check the server's status. A `failed` status usually means a dependency or import error in your server file. To see the stderr trace, restart with `claude --debug --dangerously-load-development-channels server:webhook` and check the debug log at `~/.claude/debug/<session-id>.txt`.
     * **`curl` fails with "connection refused"**: the port is either not bound yet or a stale process from an earlier run is holding it. `lsof -i :<port>` shows what's listening; `kill` the stale process before restarting your session.
   </Step>
 </Steps>
@@ -198,7 +198,7 @@ A channel sets these options in the [`Server`](https://modelcontextprotocol.io/d
 | `capabilities.experimental['claude/channel']`            | `object`            | Required. Always `{}`. Presence registers the notification listener.                                                                                                                                                                                                                                                                                                                 |
 | `capabilities.experimental['claude/channel/permission']` | `object` or `false` | Optional. Set it to `{}` to declare that this channel can receive permission relay requests. When declared, Claude Code forwards tool approval prompts to your channel so you can approve or deny them remotely. To opt out, omit the key or set it to `false`. Before v2.1.234, Claude Code treated `false` as declared. See [Relay permission prompts](#relay-permission-prompts). |
 | `capabilities.tools`                                     | `object`            | Two-way only. Always `{}`. Standard MCP tool capability. See [Expose a reply tool](#expose-a-reply-tool).                                                                                                                                                                                                                                                                            |
-| `instructions`                                           | `string`            | Recommended. Added to Claude's system prompt. Tell Claude what events to expect, what the `<channel>` tag attributes mean, whether to reply, and if so which tool to use and which attribute to pass back (like `chat_id`).                                                                                                                                                          |
+| `instructions`                                           | `string`            | Recommended. Claude Code delivers it to Claude as context when the server connects. Tell Claude what events to expect, what the `<channel>` tag attributes mean, whether to reply, and if so which tool to use and which attribute to pass back (like `chat_id`).                                                                                                                    |
 
 To create a one-way channel, omit `capabilities.tools`. This example shows a two-way setup with the channel capability, tools, and instructions set:
 
@@ -212,7 +212,7 @@ const mcp = new Server(
       experimental: { 'claude/channel': {} },  // registers the channel listener
       tools: {},  // omit for one-way channels
     },
-    // added to Claude's system prompt so it knows how to handle your events
+    // Claude Code delivers this to Claude as context when the server connects, so it knows how to handle your events
     instructions: 'Messages arrive as <channel source="your-channel" ...>. Reply with the reply tool.',
   },
 )
@@ -476,6 +476,8 @@ Clients on Claude Code v2.1.211 or later sanitize `description` and `input_previ
 * Claude Code relays text whole up to 3,500 code points. For a longer value, you receive its start and its end around a counted `⋯ N code points elided ⋯` marker. The end of a long command still reaches the approver.
 
 For `input_preview`, Claude Code applies the 3,500 limit to each top-level field of the arguments separately and keeps the JSON's own structural quotes. Clients before v2.1.211 relay `description` raw and cut `input_preview` to 200 UTF-16 units with a trailing ellipsis.
+
+Clients on Claude Code v2.1.234 or later relay the marker `(value unserializable)` in place of an `input_preview` field value they can't serialize safely, such as a circular structure or an extremely large array. You still receive the field's key, and the preview's other fields are unchanged.
 
 Clients on Claude Code v2.1.234 or later also mask credentials in `description` and `input_preview`. You receive `[REDACTED]` in place of a recognizable provider credential token, such as an API key or a personal access token. Expect three effects of the masking when you render the fields:
 
