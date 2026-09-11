@@ -23,4 +23,6 @@ If no heading names the topic, `grep -n` the keyword and read its enclosing sect
 
 ## References
 
-!`"${CLAUDE_PLUGIN_ROOT}/scripts/list-references.sh" "${CLAUDE_SKILL_DIR}/references/upstream"`
+Paths are relative to this skill's base directory.
+
+!`"${CLAUDE_PLUGIN_ROOT}/scripts/list-references.sh" "${CLAUDE_SKILL_DIR}"`
