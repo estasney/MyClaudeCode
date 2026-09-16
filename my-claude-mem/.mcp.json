@@ -7,9 +7,11 @@
         "--project",
         "${CLAUDE_PLUGIN_ROOT}",
         "--no-dev",
+        "--frozen",
         "claude-memory"
       ],
       "env": {
+        "UV_PROJECT_ENVIRONMENT": "${CLAUDE_PLUGIN_DATA}/.venv",
         "ORT_DISABLE_TELEMETRY": "1",
         "CLAUDE_MEMORY_PERSISTENT_PATH": "${CLAUDE_PLUGIN_DATA}/chroma",
         "CLAUDE_MEMORY_INDEX_DB_PATH": "${CLAUDE_PLUGIN_DATA}/hybrid.db"
