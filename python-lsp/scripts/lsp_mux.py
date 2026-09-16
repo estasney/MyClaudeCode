@@ -51,6 +51,12 @@ Usage
 
 With no argument the proxy runs the built-in basedpyright + ruff
 configuration. Configure it as the language-server executable.
+
+Tracing
+-------
+    LSP_MUX_LOG=<path>   append proxy log lines and child-server stderr to a file
+    LSP_MUX_DEBUG=1      trace lifecycle, document sync, and diagnostics routing
+    LSP_MUX_DEBUG=2      additionally dump every message on the wire (truncated)
 """
 
 from __future__ import annotations
@@ -164,6 +170,34 @@ def log(*parts: object) -> None:
     print("[lsp_mux]", *parts, file=sys.stderr, flush=True)
 
 
+def debug_level() -> int:
+    raw = os.environ.get("LSP_MUX_DEBUG", "")
+    return int(raw) if raw.isdigit() else 0
+
+
+def debug(*parts: object) -> None:
+    if debug_level() >= 1:
+        log("debug:", *parts)
+
+
+def trace_wire(direction: str, message: Json) -> None:
+    if debug_level() >= 2:
+        text = json.dumps(message, separators=(",", ":"))
+        log("wire:", direction, text[:2000])
+
+
+def configure_log_file() -> None:
+    """Send stderr (ours and the child servers') to LSP_MUX_LOG when set."""
+    path = os.environ.get("LSP_MUX_LOG")
+    if not path:
+        return
+    fd = os.open(path, os.O_WRONLY | os.O_APPEND | os.O_CREAT, 0o644)
+    os.dup2(fd, sys.stderr.fileno())  # child servers inherit fd 2 as well
+    os.close(fd)
+    log("---- start", "pid", os.getpid(), "platform", sys.platform, sys.version)
+    log("argv:", sys.argv, "cwd:", os.getcwd())
+
+
 # --------------------------------------------------------------------------
 # Configuration
 # --------------------------------------------------------------------------
@@ -238,9 +272,10 @@ class Writer(Protocol):
 class Endpoint:
     """One side of an LSP byte stream: framed reads and locked writes."""
 
-    def __init__(self, reader: asyncio.StreamReader, writer: Writer):
+    def __init__(self, reader: asyncio.StreamReader, writer: Writer, label: str):
         self.reader: asyncio.StreamReader = reader
         self.writer: Writer = writer
+        self.label: str = label
         self.lock: asyncio.Lock = asyncio.Lock()
 
     async def read(self) -> Json | None:
@@ -259,9 +294,12 @@ class Endpoint:
         if length is None:
             raise RuntimeError("frame missing Content-Length header")
         body = await self.reader.readexactly(length)
-        return json.loads(body)
+        message = json.loads(body)
+        trace_wire(f"{self.label} ->", message)
+        return message
 
     async def write(self, message: Json) -> None:
+        trace_wire(f"{self.label} <-", message)
         body = json.dumps(message, separators=(",", ":")).encode()
         frame = b"Content-Length: %d\r\n\r\n%s" % (len(body), body)
         async with self.lock:
@@ -334,7 +372,8 @@ async def stdio_endpoint() -> Endpoint:
         threading.Thread(
             target=pump_stdin, args=(reader, loop), name="stdin", daemon=True
         ).start()
-        return Endpoint(reader, ThreadWriter(sys.stdout.buffer))
+        debug("client stdio: thread bridge")
+        return Endpoint(reader, ThreadWriter(sys.stdout.buffer), "client")
     await loop.connect_read_pipe(
         lambda: asyncio.StreamReaderProtocol(reader), sys.stdin.buffer
     )
@@ -342,7 +381,8 @@ async def stdio_endpoint() -> Endpoint:
         asyncio.streams.FlowControlMixin, sys.stdout.buffer
     )
     writer = asyncio.StreamWriter(transport, protocol, None, loop)
-    return Endpoint(reader, writer)
+    debug("client stdio: pipe transports")
+    return Endpoint(reader, writer, "client")
 
 
 # --------------------------------------------------------------------------
@@ -450,9 +490,11 @@ class Server:
     async def start(self) -> None:
         cfg = self.config
         if cfg.cmd is None:
+            debug(f"{self.name}: connecting to {cfg.host}:{cfg.port}")
             reader, writer = await asyncio.open_connection(cfg.host, cfg.port)
-            self.connection = Endpoint(reader, writer)
+            self.connection = Endpoint(reader, writer, self.name)
             return
+        debug(f"{self.name}: spawning", [cfg.cmd, *cfg.args])
         proc = await asyncio.create_subprocess_exec(
             cfg.cmd,
             *cfg.args,
@@ -462,8 +504,9 @@ class Server:
         )
         if proc.stdout is None or proc.stdin is None:
             raise RuntimeError(f"server {self.name!r}: subprocess has no stdio pipes")
+        debug(f"{self.name}: spawned pid {proc.pid}")
         self.proc = proc
-        self.connection = Endpoint(proc.stdout, proc.stdin)
+        self.connection = Endpoint(proc.stdout, proc.stdin, self.name)
 
     def supports(self, capability: str) -> bool:
         return bool(self.capabilities.get(capability))
@@ -692,6 +735,14 @@ class Proxy:
         for server, result in zip(self.servers, results):
             server.capabilities = result.get("capabilities", {})
             self.register_commands(server)
+            debug(
+                f"{server.name}: initialized;",
+                "serverInfo:",
+                result.get("serverInfo"),
+                "capabilities:",
+                sorted(server.capabilities),
+            )
+        debug("workspace roots:", sorted(map(str, self.workspace_roots)))
 
         merged = json.loads(json.dumps(results[0]))  # deep copy of primary's reply
         capabilities: Json = merged.setdefault("capabilities", {})
@@ -845,7 +896,8 @@ class Proxy:
                     log(f"{server.name}: unmatched message:", message)
         server.fail_all(f"{server.name} closed its connection")
         if not self.exiting.is_set():
-            log(f"{server.name}: connection closed unexpectedly")
+            code = server.proc.returncode if server.proc is not None else None
+            log(f"{server.name}: connection closed unexpectedly; returncode {code}")
             if server is self.primary:
                 self.exiting.set()
 
@@ -858,11 +910,26 @@ class Proxy:
         await self.client.request(proxy_id, method, message.get("params"))
 
     async def publish_diagnostics(self, server: Server, params: Json) -> None:
-        uri = params.get("uri")
-        if not isinstance(uri, str):
+        raw_uri = params.get("uri")
+        if not isinstance(raw_uri, str):
             return
-        uri = self.client_uri_by_key.get(uri_key(uri), uri)
+        uri = self.client_uri_by_key.get(uri_key(raw_uri), raw_uri)
+        count = len(params.get("diagnostics", []))
+        debug(
+            f"{server.name}: publish {count} diagnostics",
+            "version",
+            params.get("version"),
+            "uri",
+            raw_uri,
+            "-> client uri",
+            uri,
+            "key",
+            uri_key(raw_uri),
+            "open docs",
+            list(self.client_uri_by_key.values()),
+        )
         if not self.in_workspace(uri):
+            debug(f"{server.name}: {uri} outside workspace roots; emitting empty")
             await self.client.notify(
                 "textDocument/publishDiagnostics", {"uri": uri, "diagnostics": []}
             )
@@ -871,10 +938,18 @@ class Proxy:
         per_uri[server.index] = params.get("diagnostics", [])
         hold = self.holds.get(uri)
         if hold is None:
+            debug(f"{server.name}: no hold for {uri}; emitting now")
             await self.emit_merged(uri, version=params.get("version"))
             return
         if covers_held_version(hold, params.get("version")):
             hold.servers_reported.add(server.index)
+        debug(
+            f"{server.name}: hold version {hold.version};",
+            "reported",
+            sorted(hold.servers_reported),
+            "of",
+            len(self.servers),
+        )
         if len(hold.servers_reported) == len(self.servers):
             self.release_hold(uri)
             await self.emit_merged(uri, version=hold.version)
@@ -883,12 +958,17 @@ class Proxy:
 
     def track_client_state(self, method: str, params: Any) -> None:
         match method, params:
-            case "textDocument/didOpen", {"textDocument": {"uri": str(uri)}}:
+            case "textDocument/didOpen", {"textDocument": {"uri": str(uri), **rest}}:
+                debug(
+                    "didOpen", uri, "version", rest.get("version"), "key", uri_key(uri)
+                )
                 self.client_uri_by_key[uri_key(uri)] = uri
                 self.begin_hold(params)
-            case "textDocument/didChange", _:
+            case "textDocument/didChange", {"textDocument": {"uri": str(uri), **rest}}:
+                debug("didChange", uri, "version", rest.get("version"))
                 self.begin_hold(params)
             case "textDocument/didClose", {"textDocument": {"uri": str(uri)}}:
+                debug("didClose", uri)
                 self.release_hold(uri)
                 self.client_uri_by_key.pop(uri_key(uri), None)
             case "workspace/didChangeWorkspaceFolders", {"event": dict(event)}:
@@ -923,6 +1003,13 @@ class Proxy:
         await asyncio.sleep(self.settle_seconds)
         hold = self.holds.pop(uri, None)
         if hold is not None:
+            debug(
+                f"hold expired for {uri};",
+                "reported",
+                sorted(hold.servers_reported),
+                "of",
+                len(self.servers),
+            )
             await self.emit_merged(uri, version=hold.version)
 
     async def emit_merged(self, uri: str, version: Any = None) -> None:
@@ -935,6 +1022,14 @@ class Proxy:
         }
         if version is not None:
             merged["version"] = version
+        debug(
+            "emit merged for",
+            uri,
+            "version",
+            version,
+            "per server",
+            {self.servers[i].name: len(d) for i, d in per_uri.items()},
+        )
         await self.client.notify("textDocument/publishDiagnostics", merged)
 
 
@@ -960,6 +1055,7 @@ async def amain(configs: Iterable[ServerConfig]) -> None:
 
 
 def main(argv: Sequence[str]) -> int:
+    configure_log_file()
     match argv:
         case []:
             configs = load_config(None)
