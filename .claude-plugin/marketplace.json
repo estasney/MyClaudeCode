@@ -8,6 +8,11 @@
       "description": "Personal Claude Code setup: curated skills, commands, hooks, and output styles."
     },
     {
+      "name": "my-claude-mem",
+      "source": "./my-claude-mem",
+      "description": "Session memory for Claude Code: capture, store, and recall context across sessions."
+    },
+    {
       "name": "python-lsp",
       "source": "./python-lsp",
       "description": "Python code intelligence: basedpyright and ruff behind a multiplexing proxy, registered as one language server. Type errors, navigation, and lint diagnostics together."

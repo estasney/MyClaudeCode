@@ -1,0 +1,122 @@
+[project]
+name = "claude-memory"
+version = "0.1.0"
+description = "Hybrid vector + keyword memory for Claude Code, served over MCP stdio."
+readme = "README.md"
+authors = [
+    { name = "estasney", email = "estasney@users.noreply.github.com" }
+]
+requires-python = ">=3.12"
+dependencies = [
+    "aiosqlite>=0.22.1,<0.23.0",
+    "alembic>=1.19.1,<2.0.0",
+    "chromadb>=1.5.9,<2.0.0",
+    "fastmcp>=3.4.7,<4.0.0",
+    "huggingface-hub>=1.28.0,<2.0.0",
+    "numpy>=2.5.2,<3.0.0",
+    "pydantic>=2.13.4,<3.0.0",
+    "pydantic-settings>=2.15.0,<3.0.0",
+    "sentence-transformers>=6.0.0,<7.0.0",
+    "sqlalchemy>=2.0.52,<3.0.0",
+]
+
+[tool.uv]
+add-bounds = "major"
+
+[project.scripts]
+claude-memory = "claude_memory.server:main"
+
+[build-system]
+requires = ["uv_build>=0.12.13,<0.13.0"]
+build-backend = "uv_build"
+
+[tool.basedpyright]
+include = ["src"]
+extraPaths = ["src"]
+pythonVersion = "3.12"
+reportAny = false
+reportConstantRedefinition = false
+reportImplicitOverride = false
+reportImplicitStringConcatenation = false
+reportImportCycles = false
+reportMissingModuleSource = false
+reportMissingSuperCall = false
+reportUnannotatedClassAttribute = false
+reportUnknownLambdaType = false
+reportUnknownMemberType = false
+reportUnnecessaryComparison = false
+reportUnsafeMultipleInheritance = false
+reportUnusedCallResult = false
+reportUnusedImport = false
+reportUnusedParameter = false
+strictDictionaryInference = true
+strictListInference = true
+strictSetInference = true
+
+[tool.ruff.lint]
+select = [
+    "A",
+    "ANN",
+    "ASYNC",
+    "B",
+    "BLE",
+    "C4",
+    "DTZ",
+    "ERA",
+    "F",
+    "FA",
+    "FAST",
+    "FBT",
+    "FLY",
+    "FURB",
+    "I",
+    "INP",
+    "N",
+    "NPY",
+    "PD",
+    "PERF",
+    "PIE",
+    "PLC0105",
+    "PLC0131",
+    "PLC0132",
+    "PLC0207",
+    "PLC0208",
+    "PLE",
+    "PLR",
+    "PLW",
+    "PYI",
+    "RET",
+    "RUF",
+    "SIM",
+    "TRY",
+    "UP",
+    "YTT",
+]
+ignore = [
+    "A002",
+    "ANN002",
+    "ANN003",
+    "ANN202",
+    "ANN401",
+    "ASYNC119",
+    "N818",
+    "PLR0904",
+    "PLR0911",
+    "PLR0912",
+    "PLR0913",
+    "PLR0915",
+    "PLR0917",
+    "PLR2004",
+    "PLW0603",
+    "RET504",
+    "RUF001",
+    "RUF105",
+    "RUF106",
+    "RUF201",
+    "TRY003",
+    "UP051",
+]
+
+[tool.ruff.lint.per-file-ignores]
+"src/claude_memory/tools.py" = ["B008", "ARG001"]
+"**/__init__.py" = ["I"]

@@ -4,4 +4,6 @@
 !.claude-plugin
 !**/.claude-plugin
 !**/.lsp.json
+!**/.mcp.json
+!**/.python-version
 **/__pycache__

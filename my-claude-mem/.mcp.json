@@ -1,0 +1,19 @@
+{
+  "mcpServers": {
+    "memory": {
+      "command": "uv",
+      "args": [
+        "run",
+        "--project",
+        "${CLAUDE_PLUGIN_ROOT}",
+        "--no-dev",
+        "claude-memory"
+      ],
+      "env": {
+        "ORT_DISABLE_TELEMETRY": "1",
+        "CLAUDE_MEMORY_PERSISTENT_PATH": "${CLAUDE_PLUGIN_DATA}/chroma",
+        "CLAUDE_MEMORY_INDEX_DB_PATH": "${CLAUDE_PLUGIN_DATA}/hybrid.db"
+      }
+    }
+  }
+}
