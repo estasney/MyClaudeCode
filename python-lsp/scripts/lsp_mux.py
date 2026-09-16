@@ -5,79 +5,35 @@
 # ///
 """lsp_mux: present several LSP servers to an editor as a single stdio server.
 
-Claude Code registers one language server per file extension, so basedpyright
-and ruff cannot both claim ``.py``. This proxy fans out to both and reports
-itself as a single server.
+Usage: lsp_mux.py [config.toml | config.json]
 
-Clean-room implementation of the multiplexing behavior described by the
-lsp-proxy project (techee/lsp-proxy). No third-party dependencies.
-
-Routing model
--------------
-* The first configured server is *primary*. It receives every request the
-  proxy does not route elsewhere.
-* All servers receive lifecycle and document-synchronization notifications
-  (didOpen/didChange/...), so each can produce diagnostics.
-* ``textDocument/publishDiagnostics`` from all servers is merged per URI.
-  A server may re-spell a file URI (pyright lowercases the Windows drive
-  letter and encodes its colon as ``%3A``); publishes are keyed by the
-  underlying path and emitted under the URI the client opened.
-* Diagnostics for files outside every workspace folder are emitted empty.
-* A merged publish is held while a document settles: didOpen/didChange
-  starts a hold, released once every server has published for that version
-  or after a short timeout (basedpyright skips publishing entirely when an
-  edit leaves its diagnostics unchanged). Without the hold, ruff's
-  synchronous publish would be merged with the other server's stale list
-  and emitted, describing a file state that no longer exists.
-* A request whose capability the primary does not advertise is routed to the
-  first server that does (e.g. formatting -> ruff when basedpyright is
-  primary).
-* ``textDocument/codeAction`` fans out to every server advertising the
-  capability; results are concatenated. Each action's ``data`` field is
-  tagged so ``codeAction/resolve`` returns to the originating server.
-* ``workspace/executeCommand`` routes by command name, using the command
-  registries advertised at ``initialize``.
-* Server-initiated requests (``workspace/configuration``,
-  ``client/registerCapability``, ...) are forwarded to the client with
-  remapped ids; responses are routed back to the originating server.
-* ``workspace/didChangeConfiguration`` carries a server's own ``settings``
-  when its config declares them, and the client's payload otherwise. Without
-  this, every server would be handed whatever settings the client meant for
-  the primary.
-
-Usage
------
-    lsp_mux.py [config.toml | config.json]
-
-With no argument the proxy runs the built-in basedpyright + ruff
-configuration. Configure it as the language-server executable.
-
-Tracing
--------
-    LSP_MUX_LOG=<path>   append proxy log lines and child-server stderr to a file
-    LSP_MUX_DEBUG=1      trace lifecycle, document sync, and diagnostics routing
-    LSP_MUX_DEBUG=2      additionally dump every message on the wire (truncated)
+Tracing: LSP_MUX_LOG=<path> appends log lines and child stderr to a file;
+LSP_MUX_DEBUG=1 traces routing, LSP_MUX_DEBUG=2 also dumps wire messages.
 """
 
 from __future__ import annotations
 
 import asyncio
+import copy
 import json
 import os
 import signal
 import sys
 import threading
-from collections.abc import Iterable, Sequence
+from collections.abc import Coroutine, Iterable, Sequence
 from contextlib import suppress
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from enum import Enum, auto
 from pathlib import Path
-from typing import Any, BinaryIO, Protocol, Self
-from urllib.parse import urlsplit
-from urllib.request import url2pathname
+from typing import BinaryIO, Protocol, Self, assert_never, cast
+from urllib.parse import unquote, urlsplit
 
 import tomllib
 
-type Json = dict[str, Any]
+type JsonValue = (
+    None | bool | int | float | str | list[JsonValue] | dict[str, JsonValue]
+)
+type JsonObject = dict[str, JsonValue]
 type MsgId = int | str
 
 JSONRPC = "2.0"
@@ -180,7 +136,7 @@ def debug(*parts: object) -> None:
         log("debug:", *parts)
 
 
-def trace_wire(direction: str, message: Json) -> None:
+def trace_wire(direction: str, message: JsonValue) -> None:
     if debug_level() >= 2:
         text = json.dumps(message, separators=(",", ":"))
         log("wire:", direction, text[:2000])
@@ -192,15 +148,332 @@ def configure_log_file() -> None:
     if not path:
         return
     fd = os.open(path, os.O_WRONLY | os.O_APPEND | os.O_CREAT, 0o644)
-    os.dup2(fd, sys.stderr.fileno())  # child servers inherit fd 2 as well
+    stderr_fd = sys.stderr.fileno()
+    if os.dup2(fd, stderr_fd) != stderr_fd:  # child servers inherit fd 2 as well
+        raise OSError("could not redirect stderr to the log file")
     os.close(fd)
     log("---- start", "pid", os.getpid(), "platform", sys.platform, sys.version)
     log("argv:", sys.argv, "cwd:", os.getcwd())
 
 
 # --------------------------------------------------------------------------
+# JSON helpers: narrow untyped JSON at the boundary
+# --------------------------------------------------------------------------
+
+
+def as_object(value: JsonValue) -> JsonObject:
+    return value if isinstance(value, dict) else {}
+
+
+def as_list(value: JsonValue) -> list[JsonValue]:
+    return value if isinstance(value, list) else []
+
+
+def as_str(value: JsonValue) -> str | None:
+    return value if isinstance(value, str) else None
+
+
+def as_int(value: JsonValue) -> int | None:
+    return value if isinstance(value, int) and not isinstance(value, bool) else None
+
+
+def as_msg_id(value: JsonValue) -> MsgId | None:
+    match value:
+        case bool():
+            return None
+        case int() | str():
+            return value
+        case _:
+            return None
+
+
+def load_json(data: bytes) -> JsonValue:
+    return cast(JsonValue, json.loads(data))
+
+
+# --------------------------------------------------------------------------
+# JSON-RPC messages
+# --------------------------------------------------------------------------
+
+
+@dataclass(slots=True, frozen=True)
+class RpcError:
+    code: int
+    message: str
+    data: JsonValue = None
+
+    @classmethod
+    def from_json(cls, raw: JsonObject) -> Self:
+        code = as_int(raw.get("code"))
+        message = as_str(raw.get("message"))
+        return cls(
+            code=INTERNAL_ERROR if code is None else code,
+            message="server error" if message is None else message,
+            data=raw.get("data"),
+        )
+
+    def to_json(self) -> JsonObject:
+        body: JsonObject = {"code": self.code, "message": self.message}
+        if self.data is not None:
+            body["data"] = self.data
+        return body
+
+
+@dataclass(slots=True, frozen=True)
+class Request:
+    id: MsgId
+    method: str
+    params: JsonValue
+
+
+@dataclass(slots=True, frozen=True)
+class Notification:
+    method: str
+    params: JsonValue
+
+
+@dataclass(slots=True, frozen=True)
+class Response:
+    id: MsgId
+    result: JsonValue = None
+    error: RpcError | None = None
+
+
+type Message = Request | Notification | Response
+
+
+def parse_message(raw: JsonValue) -> Message | None:
+    """Classify one decoded JSON-RPC frame; None when it fits no shape."""
+    if not isinstance(raw, dict):
+        return None
+    method = as_str(raw.get("method"))
+    id_ = as_msg_id(raw.get("id"))
+    if method is not None and id_ is not None:
+        return Request(id_, method, raw.get("params"))
+    if method is not None:
+        return Notification(method, raw.get("params"))
+    if id_ is None:
+        return None
+    error = raw.get("error")
+    if isinstance(error, dict):
+        return Response(id_, error=RpcError.from_json(error))
+    return Response(id_, result=raw.get("result"))
+
+
+def encode_message(message: Message) -> JsonObject:
+    match message:
+        case Request(id=id_, method=method, params=params):
+            return {"jsonrpc": JSONRPC, "id": id_, "method": method, "params": params}
+        case Notification(method=method, params=params):
+            return {"jsonrpc": JSONRPC, "method": method, "params": params}
+        case Response(id=id_, error=RpcError() as error):
+            return {"jsonrpc": JSONRPC, "id": id_, "error": error.to_json()}
+        case Response(id=id_, result=result):
+            return {"jsonrpc": JSONRPC, "id": id_, "result": result}
+        case _:
+            assert_never(message)
+
+
+# --------------------------------------------------------------------------
+# Document identity: one value type, equal by construction
+# --------------------------------------------------------------------------
+
+
+class Platform(Enum):
+    posix = auto()
+    windows = auto()
+
+
+def current_platform() -> Platform:
+    return Platform.windows if os.name == "nt" else Platform.posix
+
+
+def path_separator(platform: Platform) -> str:
+    match platform:
+        case Platform.posix:
+            return "/"
+        case Platform.windows:
+            return "\\"
+
+
+def normalize_local_path(path: str, platform: Platform) -> str:
+    """Canonical spelling of a local path for equality and prefix tests."""
+    match platform:
+        case Platform.posix:
+            return path
+        case Platform.windows:
+            return path.replace("/", "\\").casefold()
+
+
+def local_path_from_uri(netloc: str, uri_path: str, platform: Platform) -> str:
+    """Decode a file URI's path component into a canonical local path.
+
+    Decoding happens before any drive-letter test, which is where urllib's
+    url2pathname goes wrong: pyright spells ``C:`` as ``c%3A``.
+    """
+    decoded = unquote(uri_path)
+    match platform:
+        case Platform.posix:
+            return decoded
+        case Platform.windows:
+            if netloc:  # file://server/share/... -> \\server\share\...
+                decoded = f"//{netloc}{decoded}"
+            elif decoded[:1] == "/" and decoded[2:3] == ":":  # /c:/... -> c:/...
+                decoded = decoded[1:]
+            return normalize_local_path(decoded, platform)
+
+
+@dataclass(slots=True, frozen=True)
+class DocumentId:
+    """Identity of a document independent of how its URI is spelled.
+
+    Two ids compare equal when they name the same file, whatever the case
+    of the drive letter or the percent-encoding. The spelling used to build
+    the id is kept so a publish can go out under the client's own URI.
+    """
+
+    key: str
+    is_file: bool
+    uri: str = field(compare=False, hash=False)
+
+    @classmethod
+    def from_uri(cls, uri: str, platform: Platform) -> Self:
+        parts = urlsplit(uri)
+        if parts.scheme != "file":
+            return cls(key=uri, is_file=False, uri=uri)
+        key = local_path_from_uri(parts.netloc, parts.path, platform)
+        return cls(key=key, is_file=True, uri=uri)
+
+
+class Membership(Enum):
+    inside = auto()
+    outside = auto()
+    unfiltered = auto()  # no roots configured, or not a local file
+
+
+@dataclass(slots=True, frozen=True)
+class Workspace:
+    """Root folders as canonical path keys; membership is a pure prefix test."""
+
+    platform: Platform
+    roots: frozenset[str] = frozenset()
+
+    def root_key(self, uri: str) -> str | None:
+        doc = DocumentId.from_uri(uri, self.platform)
+        if not doc.is_file:
+            return None
+        return doc.key.rstrip(path_separator(self.platform))
+
+    def with_folders(self, added: Iterable[str], removed: Iterable[str]) -> Self:
+        added_keys = {key for uri in added if (key := self.root_key(uri)) is not None}
+        removed_keys = {
+            key for uri in removed if (key := self.root_key(uri)) is not None
+        }
+        return type(self)(self.platform, (self.roots | added_keys) - removed_keys)
+
+    def with_local_root(self, path: str) -> Self:
+        key = normalize_local_path(path, self.platform)
+        return type(self)(self.platform, self.roots | {key})
+
+    def membership(self, doc: DocumentId) -> Membership:
+        if not self.roots or not doc.is_file:
+            return Membership.unfiltered
+        sep = path_separator(self.platform)
+        for root in self.roots:
+            if doc.key == root or doc.key.startswith(root + sep):
+                return Membership.inside
+        return Membership.outside
+
+
+# --------------------------------------------------------------------------
+# LSP payload shapes the proxy inspects
+# --------------------------------------------------------------------------
+
+
+@dataclass(slots=True, frozen=True)
+class TextDocumentRef:
+    uri: str
+    version: int | None
+
+
+def parse_text_document(params: JsonValue) -> TextDocumentRef | None:
+    text_document = as_object(as_object(params).get("textDocument"))
+    uri = as_str(text_document.get("uri"))
+    if uri is None:
+        return None
+    return TextDocumentRef(uri, as_int(text_document.get("version")))
+
+
+@dataclass(slots=True, frozen=True)
+class PublishDiagnostics:
+    uri: str
+    version: int | None
+    diagnostics: list[JsonValue]
+
+
+def parse_publish_diagnostics(params: JsonValue) -> PublishDiagnostics | None:
+    body = as_object(params)
+    uri = as_str(body.get("uri"))
+    if uri is None:
+        return None
+    return PublishDiagnostics(
+        uri, as_int(body.get("version")), as_list(body.get("diagnostics"))
+    )
+
+
+def workspace_folder_uris(folders: JsonValue) -> list[str]:
+    return [
+        uri
+        for folder in as_list(folders)
+        if (uri := as_str(as_object(folder).get("uri"))) is not None
+    ]
+
+
+# --------------------------------------------------------------------------
 # Configuration
 # --------------------------------------------------------------------------
+
+
+def config_str(raw: JsonObject, key: str) -> str | None:
+    value = raw.get(key)
+    if value is None:
+        return None
+    if not isinstance(value, str):
+        raise TypeError(f"config field {key!r} must be a string")
+    return value
+
+
+def config_int(raw: JsonObject, key: str) -> int | None:
+    value = raw.get(key)
+    if value is None:
+        return None
+    parsed = as_int(value)
+    if parsed is None:
+        raise TypeError(f"config field {key!r} must be an integer")
+    return parsed
+
+
+def config_str_list(raw: JsonObject, key: str) -> tuple[str, ...]:
+    value = raw.get(key)
+    if value is None:
+        return ()
+    if not isinstance(value, list):
+        raise TypeError(f"config field {key!r} must be a list of strings")
+    items: list[str] = []
+    for item in value:
+        if not isinstance(item, str):
+            raise TypeError(f"config field {key!r} must be a list of strings")
+        items.append(item)
+    return tuple(items)
+
+
+def config_object(raw: JsonObject, key: str) -> JsonObject | None:
+    value = raw.get(key)
+    if value is None:
+        return None
+    if not isinstance(value, dict):
+        raise TypeError(f"config field {key!r} must be an object")
+    return value
 
 
 @dataclass(slots=True, frozen=True)
@@ -210,23 +483,25 @@ class ServerConfig:
     args: tuple[str, ...] = ()
     port: int | None = None
     host: str = "127.0.0.1"
-    initialization_options: Json | None = None
-    settings: Json | None = None
+    initialization_options: JsonObject | None = None
+    settings: JsonObject | None = None
 
     def __post_init__(self) -> None:
         if self.cmd is None and self.port is None:
             raise ValueError(f"server {self.name!r}: needs 'cmd' or 'port'")
 
     @classmethod
-    def from_mapping(cls, raw: Json, index: int) -> Self:
+    def from_json(cls, raw: JsonObject, index: int) -> Self:
+        cmd = config_str(raw, "cmd")
+        name = config_str(raw, "name")
         return cls(
-            name=raw.get("name", raw.get("cmd", f"server{index}")),
-            cmd=raw.get("cmd"),
-            args=tuple(raw.get("args", ())),
-            port=raw.get("port"),
-            host=raw.get("host", "127.0.0.1"),
-            initialization_options=raw.get("initializationOptions"),
-            settings=raw.get("settings"),
+            name=name if name is not None else (cmd or f"server{index}"),
+            cmd=cmd,
+            args=config_str_list(raw, "args"),
+            port=config_int(raw, "port"),
+            host=config_str(raw, "host") or "127.0.0.1",
+            initialization_options=config_object(raw, "initializationOptions"),
+            settings=config_object(raw, "settings"),
         )
 
 
@@ -244,13 +519,15 @@ def load_config(path: Path | None) -> tuple[ServerConfig, ...]:
     if path is None:
         return DEFAULT_CONFIG
     data = path.read_bytes()
+    document: JsonValue
     match path.suffix:
         case ".toml":
-            entries = tomllib.loads(data.decode())["servers"]
+            document = tomllib.loads(data.decode())
         case _:
-            entries = json.loads(data)["servers"]
+            document = load_json(data)
+    entries = as_list(as_object(document).get("servers"))
     servers = tuple(
-        ServerConfig.from_mapping(entry, i) for i, entry in enumerate(entries)
+        ServerConfig.from_json(as_object(entry), i) for i, entry in enumerate(entries)
     )
     if not servers:
         raise ValueError("configuration defines no servers")
@@ -278,8 +555,8 @@ class Endpoint:
         self.label: str = label
         self.lock: asyncio.Lock = asyncio.Lock()
 
-    async def read(self) -> Json | None:
-        """Read one message; None on clean EOF."""
+    async def read(self) -> JsonValue | None:
+        """Read one decoded frame; None on clean EOF."""
         length: int | None = None
         while True:
             line = await self.reader.readline()
@@ -294,35 +571,21 @@ class Endpoint:
         if length is None:
             raise RuntimeError("frame missing Content-Length header")
         body = await self.reader.readexactly(length)
-        message = json.loads(body)
+        message = load_json(body)
         trace_wire(f"{self.label} ->", message)
         return message
 
-    async def write(self, message: Json) -> None:
-        trace_wire(f"{self.label} <-", message)
-        body = json.dumps(message, separators=(",", ":")).encode()
+    async def send(self, message: Message) -> None:
+        encoded = encode_message(message)
+        trace_wire(f"{self.label} <-", encoded)
+        body = json.dumps(encoded, separators=(",", ":")).encode()
         frame = b"Content-Length: %d\r\n\r\n%s" % (len(body), body)
         async with self.lock:
             self.writer.write(frame)
             await self.writer.drain()
 
-    async def request(self, id_: MsgId, method: str, params: Any) -> None:
-        await self.write(
-            {"jsonrpc": JSONRPC, "id": id_, "method": method, "params": params}
-        )
-
-    async def notify(self, method: str, params: Any) -> None:
-        await self.write({"jsonrpc": JSONRPC, "method": method, "params": params})
-
-    async def respond(
-        self, id_: MsgId, *, result: Any = None, error: Json | None = None
-    ) -> None:
-        reply: Json = {"jsonrpc": JSONRPC, "id": id_}
-        if error is not None:
-            reply["error"] = error
-        else:
-            reply["result"] = result
-        await self.write(reply)
+    async def notify(self, method: str, params: JsonValue) -> None:
+        await self.send(Notification(method, params))
 
 
 class ThreadWriter:
@@ -345,7 +608,9 @@ class ThreadWriter:
             await asyncio.to_thread(self.flush, pending)
 
     def flush(self, data: bytes) -> None:
-        self.raw.write(data)
+        written = self.raw.write(data)
+        if written != len(data):
+            raise OSError("short write to stdout")
         self.raw.flush()
 
 
@@ -357,8 +622,10 @@ def pump_stdin(reader: asyncio.StreamReader, loop: asyncio.AbstractEventLoop) ->
     """
     fd = sys.stdin.fileno()
     while chunk := os.read(fd, 65536):
-        loop.call_soon_threadsafe(reader.feed_data, chunk)
-    loop.call_soon_threadsafe(reader.feed_eof)
+        if loop.call_soon_threadsafe(reader.feed_data, chunk).cancelled():
+            return  # the loop is shutting down; stop pumping
+    if loop.call_soon_threadsafe(reader.feed_eof).cancelled():
+        log("stdin EOF arrived after the loop closed")
 
 
 def use_thread_bridge() -> bool:
@@ -374,14 +641,14 @@ async def stdio_endpoint() -> Endpoint:
         ).start()
         debug("client stdio: thread bridge")
         return Endpoint(reader, ThreadWriter(sys.stdout.buffer), "client")
-    await loop.connect_read_pipe(
+    read_transport, read_protocol = await loop.connect_read_pipe(
         lambda: asyncio.StreamReaderProtocol(reader), sys.stdin.buffer
     )
     transport, protocol = await loop.connect_write_pipe(
         asyncio.streams.FlowControlMixin, sys.stdout.buffer
     )
     writer = asyncio.StreamWriter(transport, protocol, None, loop)
-    debug("client stdio: pipe transports")
+    debug("client stdio: pipe transports", read_transport, read_protocol)
     return Endpoint(reader, writer, "client")
 
 
@@ -395,14 +662,14 @@ class ShuttingDown(Exception):
 
 
 class RemoteError(Exception):
-    def __init__(self, error: Json):
-        super().__init__(error.get("message", "server error"))
-        self.error = error
+    def __init__(self, error: RpcError):
+        super().__init__(error.message)
+        self.error: RpcError = error
 
 
 @dataclass(slots=True)
 class Pending:
-    future: asyncio.Future[Any]
+    future: asyncio.Future[JsonValue]
     client_id: MsgId | None  # set when the request originated at the client
 
 
@@ -411,10 +678,10 @@ class DocumentHold:
     """Diagnostics gate for a document with an in-flight edit.
 
     Created when didOpen/didChange passes through; merged publishes for the
-    URI are withheld until every server has published for this version (a
-    publish without a version counts) or the settle timer expires. A server
-    staying silent past the timeout means its previous diagnostics still
-    stand, so the held slots are safe to emit.
+    document are withheld until every server has published for this version
+    (a publish without a version counts) or the settle timer expires. A
+    server staying silent past the timeout means its previous diagnostics
+    still stand, so the held slots are safe to emit.
     """
 
     version: int | None
@@ -422,57 +689,46 @@ class DocumentHold:
     timer: asyncio.Task[None] | None = None
 
 
-def path_from_uri(uri: str) -> Path | None:
-    """Local path for a file:// URI; None for any other scheme."""
-    parts = urlsplit(uri)
-    if parts.scheme != "file":
-        return None
-    return Path(url2pathname(parts.path))
-
-
-def uri_key(uri: str) -> str:
-    """Identity of a document independent of how its URI is spelled.
-
-    File URIs collapse to their case-normalized path so ``file:///C:/x`` and
-    pyright's ``file:///c%3A/x`` meet; other schemes keep the raw string.
-    """
-    path = path_from_uri(uri)
-    if path is None:
-        return uri
-    return os.path.normcase(str(path))
-
-
-def workspace_folder_uris(folders: Any) -> list[str]:
-    if not isinstance(folders, list):
-        return []
-    return [
-        uri
-        for folder in folders
-        if isinstance(folder, dict) and isinstance(uri := folder.get("uri"), str)
-    ]
-
-
-def covers_held_version(hold: DocumentHold, version: Any) -> bool:
+def covers_held_version(hold: DocumentHold, version: int | None) -> bool:
     """Whether a publish is current enough to count toward releasing a hold.
 
     Publishes without a version (basedpyright's close-time clears) are taken
     at face value as current.
     """
-    if hold.version is None or not isinstance(version, int):
+    if hold.version is None or version is None:
         return True
     return version >= hold.version
+
+
+async def wait_for_event(event: asyncio.Event) -> None:
+    """Block until set; Event.wait() returns True, which carries no information."""
+    if not await event.wait():
+        raise RuntimeError("asyncio.Event.wait returned without the event set")
+
+
+class TaskKeeper:
+    """Holds references to fire-and-forget tasks until they finish."""
+
+    def __init__(self) -> None:
+        self.tasks: set[asyncio.Task[None]] = set()
+
+    def spawn(self, coro: Coroutine[None, None, None]) -> None:
+        task = asyncio.ensure_future(coro)
+        self.tasks.add(task)
+        task.add_done_callback(self.tasks.discard)
 
 
 class Server:
     """A child (or socket-connected) LSP server."""
 
-    def __init__(self, config: ServerConfig, index: int):
-        self.config = config
-        self.index = index
-        self.capabilities: Json = {}
+    def __init__(self, config: ServerConfig, index: int, tasks: TaskKeeper):
+        self.config: ServerConfig = config
+        self.index: int = index
+        self.tasks: TaskKeeper = tasks
+        self.capabilities: JsonObject = {}
         self.proc: asyncio.subprocess.Process | None = None
         self.connection: Endpoint | None = None
-        self.next_id = 0
+        self.next_id: int = 0
         self.pending: dict[int, Pending] = {}
         # client request id -> id we used toward this server (for $/cancelRequest)
         self.inflight_for_client: dict[MsgId, int] = {}
@@ -512,39 +768,46 @@ class Server:
         return bool(self.capabilities.get(capability))
 
     def send_request(
-        self, method: str, params: Any, *, client_id: MsgId | None = None
-    ) -> asyncio.Future[Any]:
+        self, method: str, params: JsonValue, *, client_id: MsgId | None = None
+    ) -> asyncio.Future[JsonValue]:
         """Forward a request; resolves with the result or raises RemoteError."""
         endpoint = self.endpoint
         self.next_id += 1
         id_ = self.next_id
-        future: asyncio.Future[Any] = asyncio.get_running_loop().create_future()
+        future: asyncio.Future[JsonValue] = asyncio.get_running_loop().create_future()
         self.pending[id_] = Pending(future, client_id)
         if client_id is not None:
             self.inflight_for_client[client_id] = id_
-        asyncio.ensure_future(endpoint.request(id_, method, params))
+        self.tasks.spawn(endpoint.send(Request(id_, method, params)))
         return future
 
-    def resolve(self, id_: MsgId, message: Json) -> bool:
+    def resolve(self, response: Response) -> bool:
         """Route a response from this server to its waiting future."""
-        pending = self.pending.pop(id_, None) if isinstance(id_, int) else None
+        pending = (
+            self.pending.pop(response.id, None)
+            if isinstance(response.id, int)
+            else None
+        )
         if pending is None:
             return False
-        if pending.client_id is not None:
-            self.inflight_for_client.pop(pending.client_id, None)
+        if (
+            pending.client_id is not None
+            and pending.client_id in self.inflight_for_client
+        ):
+            del self.inflight_for_client[pending.client_id]
         if pending.future.cancelled():
             return True
-        if "error" in message:
-            pending.future.set_exception(RemoteError(message["error"]))
+        if response.error is not None:
+            pending.future.set_exception(RemoteError(response.error))
         else:
-            pending.future.set_result(message.get("result"))
+            pending.future.set_result(response.result)
         return True
 
     def fail_all(self, reason: str) -> None:
         for pending in self.pending.values():
             if not pending.future.done():
                 pending.future.set_exception(
-                    RemoteError({"code": INTERNAL_ERROR, "message": reason})
+                    RemoteError(RpcError(INTERNAL_ERROR, reason))
                 )
         self.pending.clear()
         self.inflight_for_client.clear()
@@ -560,23 +823,26 @@ class Proxy:
         self,
         client: Endpoint,
         servers: Sequence[Server],
+        tasks: TaskKeeper,
+        platform: Platform,
         settle_seconds: float = 1.0,
     ):
-        self.client = client
-        self.servers = list(servers)
-        self.primary = self.servers[0]
-        self.settle_seconds = settle_seconds
+        self.client: Endpoint = client
+        self.servers: list[Server] = list(servers)
+        self.primary: Server = self.servers[0]
+        self.tasks: TaskKeeper = tasks
+        self.platform: Platform = platform
+        self.settle_seconds: float = settle_seconds
         # proxy-assigned id -> originating server, for server->client requests
         self.pending_client_requests: dict[int, tuple[Server, MsgId]] = {}
-        self.next_client_id = 0
-        # uri -> {server index: diagnostics list}
-        self.diagnostics_by_uri: dict[str, dict[int, list[Json]]] = {}
-        # uri -> gate withholding merged publishes while an edit settles
-        self.holds: dict[str, DocumentHold] = {}
-        # uri_key -> URI as the client spelled it at didOpen
-        self.client_uri_by_key: dict[str, str] = {}
-        # files outside every root get empty diagnostics; empty set = no filter
-        self.workspace_roots: set[Path] = set()
+        self.next_client_id: int = 0
+        # document -> {server index: diagnostics list}
+        self.diagnostics: dict[DocumentId, dict[int, list[JsonValue]]] = {}
+        # document -> gate withholding merged publishes while an edit settles
+        self.holds: dict[DocumentId, DocumentHold] = {}
+        # document -> the id carrying the client's own URI spelling
+        self.open_documents: dict[DocumentId, DocumentId] = {}
+        self.workspace: Workspace = Workspace(platform)
         # executeCommand command name -> server
         self.command_owners: dict[str, Server] = {}
         self.exiting: asyncio.Event = asyncio.Event()
@@ -585,23 +851,32 @@ class Proxy:
         self.shutdown_requested: bool = False
         self.shutdown_finished: asyncio.Event = asyncio.Event()
 
+    def document(self, uri: str) -> DocumentId:
+        """The client's id for this document when open, else a fresh one."""
+        doc = DocumentId.from_uri(uri, self.platform)
+        return self.open_documents.get(doc, doc)
+
     # ---- lifecycle -------------------------------------------------------
 
     async def run(self) -> None:
         for server in self.servers:
             await server.start()
         async with asyncio.TaskGroup() as group:
-            for server in self.servers:
+            loops: list[asyncio.Task[None]] = [
                 group.create_task(self.server_loop(server), name=server.name)
-            group.create_task(self.client_loop(), name="client")
-            group.create_task(self.watch_exit(group), name="exit-watch")
+                for server in self.servers
+            ]
+            loops.append(group.create_task(self.client_loop(), name="client"))
+            loops.append(group.create_task(self.watch_exit(), name="exit-watch"))
+            debug("running", len(loops), "loops")
 
-    async def watch_exit(self, group: asyncio.TaskGroup) -> None:
-        await self.exiting.wait()
+    async def watch_exit(self) -> None:
+        await wait_for_event(self.exiting)
         procs = [s.proc for s in self.servers if s.proc is not None]
         try:
             async with asyncio.timeout(5):
-                await asyncio.gather(*(p.wait() for p in procs))
+                codes = await asyncio.gather(*(p.wait() for p in procs))
+                debug("server exit codes:", codes)
         except TimeoutError:
             for proc in procs:
                 if proc.returncode is None:
@@ -611,32 +886,35 @@ class Proxy:
     # ---- client -> proxy -------------------------------------------------
 
     async def client_loop(self) -> None:
-        while (message := await self.client.read()) is not None:
-            match message:
-                case {"method": str(method), "id": id_}:
+        while (raw := await self.client.read()) is not None:
+            match parse_message(raw):
+                case Request() as request:
                     # Mark here, not inside the task: a client that pipelines
                     # shutdown and exit leaves both buffered, and the exit
                     # notification is handled before the task first runs.
-                    if method == "shutdown":
+                    if request.method == "shutdown":
                         self.shutdown_requested = True
-                    asyncio.ensure_future(
-                        self.client_request(id_, method, message.get("params"))
-                    )
-                case {"method": str(method)}:
-                    await self.client_notification(method, message.get("params"))
-                case {"id": id_}:  # response to a server-initiated request
-                    self.route_client_response(id_, message)
-                case _:
-                    log("unrecognized message from client:", message)
+                    self.tasks.spawn(self.client_request(request))
+                case Notification() as notification:
+                    await self.client_notification(notification)
+                case Response() as response:  # to a server-initiated request
+                    await self.route_client_response(response)
+                case None:
+                    log("unrecognized message from client:", raw)
         self.exiting.set()
 
-    async def client_request(self, id_: MsgId, method: str, params: Any) -> None:
+    async def client_request(self, request: Request) -> None:
+        id_, method, params = request.id, request.method, request.params
         try:
             match method:
                 case "initialize":
                     result = await self.initialize(params)
                 case "shutdown":
-                    await self.gather_all("shutdown", None)
+                    for server, outcome in zip(
+                        self.servers, await self.gather_all("shutdown", None)
+                    ):
+                        if isinstance(outcome, BaseException):
+                            log(f"{server.name}: shutdown failed:", outcome)
                     self.shutdown_finished.set()
                     result = None
                 case "workspace/executeCommand":
@@ -648,19 +926,20 @@ class Proxy:
                 case _:
                     server = self.route(method)
                     result = await server.send_request(method, params, client_id=id_)
-            await self.client.respond(id_, result=result)
+            await self.client.send(Response(id_, result=result))
         except RemoteError as exc:
-            await self.client.respond(id_, error=exc.error)
+            await self.client.send(Response(id_, error=exc.error))
         except Exception as exc:  # noqa: BLE001 - report, keep serving
             log(f"request {method} failed:", exc)
-            await self.client.respond(
-                id_, error={"code": INTERNAL_ERROR, "message": str(exc)}
+            await self.client.send(
+                Response(id_, error=RpcError(INTERNAL_ERROR, str(exc)))
             )
 
-    async def client_notification(self, method: str, params: Any) -> None:
+    async def client_notification(self, notification: Notification) -> None:
+        method, params = notification.method, notification.params
         match method:
-            case "$/cancelRequest" if isinstance(params, dict):
-                await self.cancel(params.get("id"))
+            case "$/cancelRequest":
+                await self.cancel(as_msg_id(as_object(params).get("id")))
             case "exit":
                 await self.await_shutdown()
                 for server in self.servers:
@@ -670,7 +949,9 @@ class Proxy:
             case "workspace/didChangeConfiguration":
                 for server in self.servers:
                     settings = server.config.settings
-                    payload = params if settings is None else {"settings": settings}
+                    payload: JsonValue = (
+                        params if settings is None else {"settings": settings}
+                    )
                     await server.endpoint.notify(method, payload)
             case _ if method in BROADCAST_NOTIFICATIONS:
                 self.track_client_state(method, params)
@@ -689,7 +970,7 @@ class Proxy:
             return
         with suppress(TimeoutError):
             async with asyncio.timeout(2):
-                await self.shutdown_finished.wait()
+                await wait_for_event(self.shutdown_finished)
 
     async def cancel(self, client_id: MsgId | None) -> None:
         if client_id is None:
@@ -698,30 +979,28 @@ class Proxy:
             if (mapped := server.inflight_for_client.get(client_id)) is not None:
                 await server.endpoint.notify("$/cancelRequest", {"id": mapped})
 
-    def route_client_response(self, id_: MsgId, message: Json) -> None:
+    async def route_client_response(self, response: Response) -> None:
         entry = (
-            self.pending_client_requests.pop(id_, None)
-            if isinstance(id_, int)
+            self.pending_client_requests.pop(response.id, None)
+            if isinstance(response.id, int)
             else None
         )
         if entry is None:
-            log("response for unknown id from client:", id_)
+            log("response for unknown id from client:", response.id)
             return
         server, original_id = entry
-        reply: Json = {"jsonrpc": JSONRPC, "id": original_id}
-        for key in ("result", "error"):
-            if key in message:
-                reply[key] = message[key]
-        asyncio.ensure_future(server.endpoint.write(reply))
+        await server.endpoint.send(
+            Response(original_id, result=response.result, error=response.error)
+        )
 
     # ---- initialize ------------------------------------------------------
 
-    async def initialize(self, params: Any) -> Json:
-        params = params if isinstance(params, dict) else {}
-        self.record_workspace_roots(params)
-        futures = []
+    async def initialize(self, params: JsonValue) -> JsonValue:
+        request = as_object(params)
+        self.record_workspace_roots(request)
+        futures: list[asyncio.Future[JsonValue]] = []
         for server in self.servers:
-            per_server = dict(params)
+            per_server = dict(request)
             match server.config.initialization_options:
                 case None if server is self.primary:
                     pass  # primary inherits the client's initializationOptions
@@ -730,10 +1009,10 @@ class Proxy:
                 case options:
                     per_server["initializationOptions"] = options
             futures.append(server.send_request("initialize", per_server))
-        results = await asyncio.gather(*futures)
+        results = [as_object(result) for result in await asyncio.gather(*futures)]
 
         for server, result in zip(self.servers, results):
-            server.capabilities = result.get("capabilities", {})
+            server.capabilities = as_object(result.get("capabilities"))
             self.register_commands(server)
             debug(
                 f"{server.name}: initialized;",
@@ -742,54 +1021,38 @@ class Proxy:
                 "capabilities:",
                 sorted(server.capabilities),
             )
-        debug("workspace roots:", sorted(map(str, self.workspace_roots)))
+        debug("workspace roots:", sorted(self.workspace.roots))
 
-        merged = json.loads(json.dumps(results[0]))  # deep copy of primary's reply
-        capabilities: Json = merged.setdefault("capabilities", {})
+        merged = copy.deepcopy(results[0])
+        capabilities = as_object(merged.get("capabilities"))
+        merged["capabilities"] = capabilities
         for server in self.servers[1:]:
             for key, value in server.capabilities.items():
                 if key not in capabilities:
                     capabilities[key] = value
         capabilities["codeActionProvider"] = self.merge_code_action_capability()
-        capabilities["executeCommandProvider"] = {
-            "commands": sorted(self.command_owners)
-        }
+        commands: list[JsonValue] = [*sorted(self.command_owners)]
+        capabilities["executeCommandProvider"] = {"commands": commands}
         return merged
 
-    def record_workspace_roots(self, params: Json) -> None:
+    def record_workspace_roots(self, params: JsonObject) -> None:
         """Seed the roots from initialize: workspaceFolders, else rootUri, else rootPath."""
         uris = workspace_folder_uris(params.get("workspaceFolders"))
-        if not uris and isinstance(params.get("rootUri"), str):
-            uris = [params["rootUri"]]
-        self.add_workspace_roots(uris)
-        if not self.workspace_roots and isinstance(params.get("rootPath"), str):
-            self.workspace_roots.add(Path(params["rootPath"]))
-
-    def add_workspace_roots(self, uris: Iterable[str]) -> None:
-        for uri in uris:
-            if (path := path_from_uri(uri)) is not None:
-                self.workspace_roots.add(path)
-
-    def remove_workspace_roots(self, uris: Iterable[str]) -> None:
-        for uri in uris:
-            if (path := path_from_uri(uri)) is not None:
-                self.workspace_roots.discard(path)
-
-    def in_workspace(self, uri: str) -> bool:
-        if not self.workspace_roots:
-            return True
-        path = path_from_uri(uri)
-        if path is None:
-            return True  # untitled:, notebook cells, ... are not filterable
-        return any(path.is_relative_to(root) for root in self.workspace_roots)
+        root_uri = as_str(params.get("rootUri"))
+        if not uris and root_uri is not None:
+            uris = [root_uri]
+        self.workspace = self.workspace.with_folders(uris, ())
+        root_path = as_str(params.get("rootPath"))
+        if not self.workspace.roots and root_path is not None:
+            self.workspace = self.workspace.with_local_root(root_path)
 
     def register_commands(self, server: Server) -> None:
-        provider = server.capabilities.get("executeCommandProvider")
-        if isinstance(provider, dict):
-            for command in provider.get("commands", ()):
-                self.command_owners.setdefault(command, server)
+        provider = as_object(server.capabilities.get("executeCommandProvider"))
+        for command in as_list(provider.get("commands")):
+            if isinstance(command, str) and command not in self.command_owners:
+                self.command_owners[command] = server
 
-    def merge_code_action_capability(self) -> bool | Json:
+    def merge_code_action_capability(self) -> JsonValue:
         providers = [
             s.capabilities["codeActionProvider"]
             for s in self.servers
@@ -797,20 +1060,22 @@ class Proxy:
         ]
         if not providers:
             return False
-        kinds = {
-            kind
-            for provider in providers
-            if isinstance(provider, dict)
-            for kind in provider.get("codeActionKinds", ())
-        }
-        resolve = any(
-            isinstance(p, dict) and p.get("resolveProvider") for p in providers
-        )
+        kinds: set[str] = set()
+        resolve = False
+        for provider in providers:
+            body = as_object(provider)
+            kinds.update(
+                kind
+                for kind in as_list(body.get("codeActionKinds"))
+                if isinstance(kind, str)
+            )
+            resolve = resolve or bool(body.get("resolveProvider"))
         if not kinds and not resolve:
             return True
-        merged: Json = {}
+        merged: JsonObject = {}
         if kinds:
-            merged["codeActionKinds"] = sorted(kinds)
+            kind_list: list[JsonValue] = [*sorted(kinds)]
+            merged["codeActionKinds"] = kind_list
         if resolve:
             merged["resolveProvider"] = True
         return merged
@@ -826,55 +1091,65 @@ class Proxy:
                 return server
         return self.primary  # let the primary answer with its own error
 
-    async def gather_all(self, method: str, params: Any) -> list[Any]:
+    async def gather_all(
+        self, method: str, params: JsonValue
+    ) -> list[JsonValue | BaseException]:
         return await asyncio.gather(
             *(s.send_request(method, params) for s in self.servers),
             return_exceptions=True,
         )
 
-    async def fan_out(self, id_: MsgId, method: str, params: Any) -> list[Json]:
+    async def fan_out(self, id_: MsgId, method: str, params: JsonValue) -> JsonValue:
         capability = CAPABILITY_FOR_METHOD[method]
         targets = [s for s in self.servers if s.supports(capability)]
         if not targets:
             raise RemoteError(
-                {"code": METHOD_NOT_FOUND, "message": f"no server supports {method}"}
+                RpcError(METHOD_NOT_FOUND, f"no server supports {method}")
             )
         results = await asyncio.gather(
             *(s.send_request(method, params, client_id=id_) for s in targets),
             return_exceptions=True,
         )
-        merged: list[Json] = []
+        merged: list[JsonValue] = []
         for server, result in zip(targets, results):
             match result:
                 case BaseException():
                     log(f"{server.name}: {method} failed:", result)
                 case list():
                     merged.extend(self.tag_origin(item, server) for item in result)
+                case _:
+                    pass
         return merged
 
-    def tag_origin(self, item: Json, server: Server) -> Json:
+    def tag_origin(self, item: JsonValue, server: Server) -> JsonValue:
         if isinstance(item, dict) and "command" not in item:  # CodeAction literal
             item["data"] = {TAG: server.index, "data": item.get("data")}
         return item
 
-    async def resolve_tagged(self, id_: MsgId, method: str, params: Any) -> Any:
-        match params:
-            case {"data": {"__lsp_mux__": int(index), "data": original}}:
-                server = self.servers[index]
-                params = {**params, "data": original}
-                if original is None:
-                    del params["data"]
-            case _:
-                server = self.route(method)
-        return await server.send_request(method, params, client_id=id_)
+    async def resolve_tagged(
+        self, id_: MsgId, method: str, params: JsonValue
+    ) -> JsonValue:
+        body = as_object(params)
+        tag = as_object(body.get("data"))
+        index = as_int(tag.get(TAG))
+        if index is None or not 0 <= index < len(self.servers):
+            server = self.route(method)
+            return await server.send_request(method, params, client_id=id_)
+        server = self.servers[index]
+        untagged = dict(body)
+        original = tag.get("data")
+        if original is None:
+            del untagged["data"]
+        else:
+            untagged["data"] = original
+        return await server.send_request(method, untagged, client_id=id_)
 
-    async def execute_command(self, id_: MsgId, params: Any) -> Any:
+    async def execute_command(self, id_: MsgId, params: JsonValue) -> JsonValue:
         fallback = self.route("workspace/executeCommand")
-        match params:
-            case {"command": str(command)}:
-                server = self.command_owners.get(command, fallback)
-            case _:
-                server = fallback
+        command = as_str(as_object(params).get("command"))
+        server = (
+            fallback if command is None else self.command_owners.get(command, fallback)
+        )
         return await server.send_request(
             "workspace/executeCommand", params, client_id=id_
         )
@@ -882,18 +1157,20 @@ class Proxy:
     # ---- server -> proxy -------------------------------------------------
 
     async def server_loop(self, server: Server) -> None:
-        while (message := await server.endpoint.read()) is not None:
-            match message:
-                case {"method": str(method), "id": id_}:
-                    await self.forward_server_request(server, id_, method, message)
-                case {"method": "textDocument/publishDiagnostics", "params": params}:
+        while (raw := await server.endpoint.read()) is not None:
+            match parse_message(raw):
+                case Request() as request:
+                    await self.forward_server_request(server, request)
+                case Notification(
+                    method="textDocument/publishDiagnostics", params=params
+                ):
                     await self.publish_diagnostics(server, params)
-                case {"method": str(method)}:
-                    await self.client.notify(method, message.get("params"))
-                case {"id": id_} if server.resolve(id_, message):
+                case Notification() as notification:
+                    await self.client.send(notification)
+                case Response() as response if server.resolve(response):
                     pass
                 case _:
-                    log(f"{server.name}: unmatched message:", message)
+                    log(f"{server.name}: unmatched message:", raw)
         server.fail_all(f"{server.name} closed its connection")
         if not self.exiting.is_set():
             code = server.proc.returncode if server.proc is not None else None
@@ -901,47 +1178,50 @@ class Proxy:
             if server is self.primary:
                 self.exiting.set()
 
-    async def forward_server_request(
-        self, server: Server, id_: MsgId, method: str, message: Json
-    ) -> None:
+    async def forward_server_request(self, server: Server, request: Request) -> None:
         self.next_client_id += 1
         proxy_id = self.next_client_id
-        self.pending_client_requests[proxy_id] = (server, id_)
-        await self.client.request(proxy_id, method, message.get("params"))
+        self.pending_client_requests[proxy_id] = (server, request.id)
+        await self.client.send(Request(proxy_id, request.method, request.params))
 
-    async def publish_diagnostics(self, server: Server, params: Json) -> None:
-        raw_uri = params.get("uri")
-        if not isinstance(raw_uri, str):
+    async def publish_diagnostics(self, server: Server, params: JsonValue) -> None:
+        publish = parse_publish_diagnostics(params)
+        if publish is None:
             return
-        uri = self.client_uri_by_key.get(uri_key(raw_uri), raw_uri)
-        count = len(params.get("diagnostics", []))
+        doc = self.document(publish.uri)
         debug(
-            f"{server.name}: publish {count} diagnostics",
+            f"{server.name}: publish {len(publish.diagnostics)} diagnostics",
             "version",
-            params.get("version"),
+            publish.version,
             "uri",
-            raw_uri,
+            publish.uri,
             "-> client uri",
-            uri,
+            doc.uri,
             "key",
-            uri_key(raw_uri),
+            doc.key,
             "open docs",
-            list(self.client_uri_by_key.values()),
+            [open_doc.uri for open_doc in self.open_documents.values()],
         )
-        if not self.in_workspace(uri):
-            debug(f"{server.name}: {uri} outside workspace roots; emitting empty")
-            await self.client.notify(
-                "textDocument/publishDiagnostics", {"uri": uri, "diagnostics": []}
-            )
-            return
-        per_uri = self.diagnostics_by_uri.setdefault(uri, {})
-        per_uri[server.index] = params.get("diagnostics", [])
-        hold = self.holds.get(uri)
+        match self.workspace.membership(doc):
+            case Membership.outside:
+                debug(
+                    f"{server.name}: {doc.key} outside workspace roots; emitting empty"
+                )
+                await self.client.notify(
+                    "textDocument/publishDiagnostics",
+                    {"uri": doc.uri, "diagnostics": []},
+                )
+                return
+            case Membership.inside | Membership.unfiltered:
+                pass
+        per_doc = self.diagnostics.setdefault(doc, {})
+        per_doc[server.index] = publish.diagnostics
+        hold = self.holds.get(doc)
         if hold is None:
-            debug(f"{server.name}: no hold for {uri}; emitting now")
-            await self.emit_merged(uri, version=params.get("version"))
+            debug(f"{server.name}: no hold for {doc.uri}; emitting now")
+            await self.emit_merged(doc, version=publish.version)
             return
-        if covers_held_version(hold, params.get("version")):
+        if covers_held_version(hold, publish.version):
             hold.servers_reported.add(server.index)
         debug(
             f"{server.name}: hold version {hold.version};",
@@ -951,84 +1231,86 @@ class Proxy:
             len(self.servers),
         )
         if len(hold.servers_reported) == len(self.servers):
-            self.release_hold(uri)
-            await self.emit_merged(uri, version=hold.version)
+            self.release_hold(doc)
+            await self.emit_merged(doc, version=hold.version)
 
     # ---- diagnostics settling ---------------------------------------------
 
-    def track_client_state(self, method: str, params: Any) -> None:
-        match method, params:
-            case "textDocument/didOpen", {"textDocument": {"uri": str(uri), **rest}}:
-                debug(
-                    "didOpen", uri, "version", rest.get("version"), "key", uri_key(uri)
+    def track_client_state(self, method: str, params: JsonValue) -> None:
+        match method:
+            case "textDocument/didOpen":
+                ref = parse_text_document(params)
+                if ref is None:
+                    return
+                doc = DocumentId.from_uri(ref.uri, self.platform)
+                debug("didOpen", ref.uri, "version", ref.version, "key", doc.key)
+                self.open_documents[doc] = doc
+                self.begin_hold(doc, ref.version)
+            case "textDocument/didChange":
+                ref = parse_text_document(params)
+                if ref is None:
+                    return
+                debug("didChange", ref.uri, "version", ref.version)
+                self.begin_hold(self.document(ref.uri), ref.version)
+            case "textDocument/didClose":
+                ref = parse_text_document(params)
+                if ref is None:
+                    return
+                doc = self.document(ref.uri)
+                debug("didClose", ref.uri)
+                self.release_hold(doc)
+                if doc in self.open_documents:
+                    del self.open_documents[doc]
+            case "workspace/didChangeWorkspaceFolders":
+                event = as_object(as_object(params).get("event"))
+                self.workspace = self.workspace.with_folders(
+                    workspace_folder_uris(event.get("added")),
+                    workspace_folder_uris(event.get("removed")),
                 )
-                self.client_uri_by_key[uri_key(uri)] = uri
-                self.begin_hold(params)
-            case "textDocument/didChange", {"textDocument": {"uri": str(uri), **rest}}:
-                debug("didChange", uri, "version", rest.get("version"))
-                self.begin_hold(params)
-            case "textDocument/didClose", {"textDocument": {"uri": str(uri)}}:
-                debug("didClose", uri)
-                self.release_hold(uri)
-                self.client_uri_by_key.pop(uri_key(uri), None)
-            case "workspace/didChangeWorkspaceFolders", {"event": dict(event)}:
-                self.add_workspace_roots(workspace_folder_uris(event.get("added")))
-                self.remove_workspace_roots(workspace_folder_uris(event.get("removed")))
             case _:
                 pass
 
-    def begin_hold(self, params: Any) -> None:
-        match params:
-            case {"textDocument": {"uri": str(uri), **fields}}:
-                version = fields.get("version")
-            case _:
-                return
-        if not self.in_workspace(uri):
+    def begin_hold(self, doc: DocumentId, version: int | None) -> None:
+        if self.workspace.membership(doc) is Membership.outside:
             return
-        self.release_hold(uri)
-        hold = DocumentHold(
-            version=version if isinstance(version, int) else None,
-            servers_reported=set(),
-        )
-        hold.timer = asyncio.ensure_future(self.expire_hold(uri))
-        self.holds[uri] = hold
+        self.release_hold(doc)
+        hold = DocumentHold(version=version, servers_reported=set())
+        hold.timer = asyncio.ensure_future(self.expire_hold(doc))
+        self.holds[doc] = hold
 
-    def release_hold(self, uri: str) -> DocumentHold | None:
-        hold = self.holds.pop(uri, None)
-        if hold is not None and hold.timer is not None:
-            hold.timer.cancel()
-        return hold
+    def release_hold(self, doc: DocumentId) -> None:
+        hold = self.holds.pop(doc, None)
+        if hold is not None and hold.timer is not None and not hold.timer.cancel():
+            debug("hold timer for", doc.uri, "had already finished")
 
-    async def expire_hold(self, uri: str) -> None:
+    async def expire_hold(self, doc: DocumentId) -> None:
         await asyncio.sleep(self.settle_seconds)
-        hold = self.holds.pop(uri, None)
+        hold = self.holds.pop(doc, None)
         if hold is not None:
             debug(
-                f"hold expired for {uri};",
+                f"hold expired for {doc.uri};",
                 "reported",
                 sorted(hold.servers_reported),
                 "of",
                 len(self.servers),
             )
-            await self.emit_merged(uri, version=hold.version)
+            await self.emit_merged(doc, version=hold.version)
 
-    async def emit_merged(self, uri: str, version: Any = None) -> None:
-        per_uri = self.diagnostics_by_uri.get(uri, {})
-        merged: Json = {
-            "uri": uri,
-            "diagnostics": [
-                diagnostic for index in sorted(per_uri) for diagnostic in per_uri[index]
-            ],
-        }
+    async def emit_merged(self, doc: DocumentId, version: int | None) -> None:
+        per_doc = self.diagnostics.get(doc, {})
+        diagnostics: list[JsonValue] = [
+            diagnostic for index in sorted(per_doc) for diagnostic in per_doc[index]
+        ]
+        merged: JsonObject = {"uri": doc.uri, "diagnostics": diagnostics}
         if version is not None:
             merged["version"] = version
         debug(
             "emit merged for",
-            uri,
+            doc.uri,
             "version",
             version,
             "per server",
-            {self.servers[i].name: len(d) for i, d in per_uri.items()},
+            {self.servers[i].name: len(d) for i, d in per_doc.items()},
         )
         await self.client.notify("textDocument/publishDiagnostics", merged)
 
@@ -1040,8 +1322,9 @@ class Proxy:
 
 async def amain(configs: Iterable[ServerConfig]) -> None:
     client = await stdio_endpoint()
-    servers = [Server(config, index) for index, config in enumerate(configs)]
-    proxy = Proxy(client, servers)
+    tasks = TaskKeeper()
+    servers = [Server(config, index, tasks) for index, config in enumerate(configs)]
+    proxy = Proxy(client, servers, tasks, current_platform())
     loop = asyncio.get_running_loop()
     for sig in (signal.SIGINT, signal.SIGTERM):
         try:

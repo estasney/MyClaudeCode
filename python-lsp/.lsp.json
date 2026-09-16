@@ -7,10 +7,6 @@
       "${CLAUDE_PLUGIN_ROOT}/scripts/lsp_mux.py",
       "${CLAUDE_PLUGIN_ROOT}/servers.json"
     ],
-    "env": {
-      "LSP_MUX_LOG": "${CLAUDE_PLUGIN_DATA}/lsp_mux.log",
-      "LSP_MUX_DEBUG": "2"
-    },
     "extensionToLanguage": {
       ".py": "python",
       ".pyi": "python"
