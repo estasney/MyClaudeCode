@@ -19,6 +19,9 @@ Routing model
 * All servers receive lifecycle and document-synchronization notifications
   (didOpen/didChange/...), so each can produce diagnostics.
 * ``textDocument/publishDiagnostics`` from all servers is merged per URI.
+  A server may re-spell a file URI (pyright lowercases the Windows drive
+  letter and encodes its colon as ``%3A``); publishes are keyed by the
+  underlying path and emitted under the URI the client opened.
 * Diagnostics for files outside every workspace folder are emitted empty.
 * A merged publish is held while a document settles: didOpen/didChange
   starts a hold, released once every server has published for that version
@@ -387,6 +390,18 @@ def path_from_uri(uri: str) -> Path | None:
     return Path(url2pathname(parts.path))
 
 
+def uri_key(uri: str) -> str:
+    """Identity of a document independent of how its URI is spelled.
+
+    File URIs collapse to their case-normalized path so ``file:///C:/x`` and
+    pyright's ``file:///c%3A/x`` meet; other schemes keep the raw string.
+    """
+    path = path_from_uri(uri)
+    if path is None:
+        return uri
+    return os.path.normcase(str(path))
+
+
 def workspace_folder_uris(folders: Any) -> list[str]:
     if not isinstance(folders, list):
         return []
@@ -515,6 +530,8 @@ class Proxy:
         self.diagnostics_by_uri: dict[str, dict[int, list[Json]]] = {}
         # uri -> gate withholding merged publishes while an edit settles
         self.holds: dict[str, DocumentHold] = {}
+        # uri_key -> URI as the client spelled it at didOpen
+        self.client_uri_by_key: dict[str, str] = {}
         # files outside every root get empty diagnostics; empty set = no filter
         self.workspace_roots: set[Path] = set()
         # executeCommand command name -> server
@@ -844,6 +861,7 @@ class Proxy:
         uri = params.get("uri")
         if not isinstance(uri, str):
             return
+        uri = self.client_uri_by_key.get(uri_key(uri), uri)
         if not self.in_workspace(uri):
             await self.client.notify(
                 "textDocument/publishDiagnostics", {"uri": uri, "diagnostics": []}
@@ -865,10 +883,14 @@ class Proxy:
 
     def track_client_state(self, method: str, params: Any) -> None:
         match method, params:
-            case "textDocument/didOpen" | "textDocument/didChange", _:
+            case "textDocument/didOpen", {"textDocument": {"uri": str(uri)}}:
+                self.client_uri_by_key[uri_key(uri)] = uri
+                self.begin_hold(params)
+            case "textDocument/didChange", _:
                 self.begin_hold(params)
             case "textDocument/didClose", {"textDocument": {"uri": str(uri)}}:
                 self.release_hold(uri)
+                self.client_uri_by_key.pop(uri_key(uri), None)
             case "workspace/didChangeWorkspaceFolders", {"event": dict(event)}:
                 self.add_workspace_roots(workspace_folder_uris(event.get("added")))
                 self.remove_workspace_roots(workspace_folder_uris(event.get("removed")))
