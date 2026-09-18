@@ -240,9 +240,11 @@ async def remember(
     memory_space: str | None = MemorySpaceField,
     client: HybridClient = GetClientDep,
 ) -> ToolResult:
-    """Store memories; an omitted ID is generated and each memory is stamped with a created_at epoch-second metadata field for recency filtering. Returns the IDs.
-
-    The memory space's embedding_max_tokens (see list_memory_spaces) is the absolute per-memory cap; longer text is silently truncated before embedding. Chunk long text to roughly half that cap for best embedding quality.
+    """
+    Store memories. 
+    The memory space's embedding_max_tokens (see list_memory_spaces) is the absolute per-memory cap; longer text is silently truncated before embedding. 
+    Chunk long text to roughly half that cap for best embedding quality.
+    Recommend to include the project_dir in metadata
     """
     name = resolve_memory_space(memory_space)
     ids = [memory.id for memory in memories]
