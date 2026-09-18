@@ -11,6 +11,7 @@ from fastmcp.dependencies import Depends
 from fastmcp.server.context import Context
 from fastmcp.tools import ToolResult
 from pydantic import BaseModel, Field
+from pydantic.json_schema import SkipJsonSchema
 
 from claude_memory.client.hybrid_client import HybridClient
 from claude_memory.deps import borrow_hybrid_client
@@ -33,7 +34,6 @@ MemorySpaceName = Annotated[
 MemorySpaceField = Field(
     default=None,
     description="Memory space to use; omit for the default memory space.",
-    examples=[None],
 )
 
 
@@ -41,52 +41,36 @@ def resolve_memory_space(memory_space: str | None) -> str:
     return memory_space or get_settings().default_memory_space
 
 
-class RecallInput(BaseModel):
-    queries: list[str] = Field(
-        description="Texts to search with; vector and keyword rankings are fused per text.",
-        examples=[["how does the user like tests structured"]],
-    )
-    memory_space: str | None = MemorySpaceField
-    limit: int = Field(
-        default=5, description="Max memories per query text.", examples=[5]
-    )
-    where: dict[str, object] | None = Field(
-        default=None, description="Metadata filter.", examples=[None]
-    )
-    where_text: dict[str, object] | None = Field(
-        default=None, description="Memory text filter.", examples=[None]
-    )
+WhereField = Field(default=None, description="Metadata filter.")
+WhereTextField = Field(default=None, description="Memory text filter.")
 
 
-class ListMemoriesInput(BaseModel):
-    memory_space: str | None = MemorySpaceField
-    ids: list[str] | None = Field(
-        default=None, description="Specific memory IDs to fetch.", examples=[None]
+def generate_memory_id() -> str:
+    return uuid.uuid4().hex
+
+
+def current_epoch_second() -> int:
+    return int(time.time())
+
+
+class NewMemory(BaseModel):
+    text: str = Field(description="Memory text.")
+    id: str = Field(
+        default_factory=generate_memory_id,
+        description="Unique Memory ID; omit to generate one.",
     )
-    where: dict[str, object] | None = Field(
-        default=None, description="Metadata filter.", examples=[None]
-    )
-    where_text: dict[str, object] | None = Field(
-        default=None, description="Memory text filter.", examples=[None]
-    )
-    limit: int | None = Field(
-        default=None, description="Max rows to return.", examples=[None]
-    )
-    offset: int | None = Field(
-        default=None, description="Row offset for pagination.", examples=[None]
-    )
+    meta: dict[str, object] | None = Field(default=None, description="Memory metadata.")
+    created_at: SkipJsonSchema[int] = Field(default_factory=current_epoch_second)
 
 
 class ReviseInput(BaseModel):
-    ids: list[str] = Field(
-        description="IDs of memories to revise.", examples=[["id-1"]]
-    )
+    ids: list[str] = Field(description="IDs of memories to revise.")
     memory_space: str | None = MemorySpaceField
     metadata: list[dict[str, object]] | None = Field(
-        default=None, description="New metadata per ID.", examples=[None]
+        default=None, description="New metadata per ID."
     )
     memories: list[str] | None = Field(
-        default=None, description="New memory text per ID.", examples=[None]
+        default=None, description="New memory text per ID."
     )
 
 
@@ -251,61 +235,68 @@ async def delete_memory_space(
 
 
 async def remember(
-    memories: list[str],
+    memories: list[NewMemory],
     ctx: Context,
     memory_space: str | None = MemorySpaceField,
-    metadata: list[dict[str, object]] | None = None,
     client: HybridClient = GetClientDep,
 ) -> ToolResult:
-    """Store memories; IDs are generated and each memory is stamped with a created_at epoch-second metadata field for recency filtering. Returns the new IDs.
+    """Store memories; an omitted ID is generated and each memory is stamped with a created_at epoch-second metadata field for recency filtering. Returns the IDs.
 
     The memory space's embedding_max_tokens (see list_memory_spaces) is the absolute per-memory cap; longer text is silently truncated before embedding. Chunk long text to roughly half that cap for best embedding quality.
     """
     name = resolve_memory_space(memory_space)
-    created_at = int(time.time())
-    ids = [uuid.uuid4().hex for _ in memories]
-    stamped = [
-        {**(metadata[i] if metadata else {}), "created_at": created_at}
-        for i in range(len(memories))
+    ids = [memory.id for memory in memories]
+    documents = [memory.text for memory in memories]
+    metadatas = [
+        {**(memory.meta or {}), "created_at": memory.created_at} for memory in memories
     ]
-    await client.add(name, ids=ids, documents=memories, metadatas=stamped)
+    await client.add(name, ids=ids, documents=documents, metadatas=metadatas)
     lines = [f"Stored {len(ids)} memories in {name!r}.", *ids]
     return ToolResult(content="\n".join(lines))
 
 
 @records_tool
 async def recall(
-    params: RecallInput,
+    queries: list[str],
     ctx: Context,
+    memory_space: str | None = MemorySpaceField,
+    limit: int = 5,
+    where: dict[str, object] | None = WhereField,
+    where_text: dict[str, object] | None = WhereTextField,
     client: HybridClient = GetClientDep,
 ) -> list[Recall]:
-    """Hybrid search over a memory space: vector and keyword rankings fused per query text. Returns one ranked list per query text."""
+    """Hybrid search over a memory space: vector and keyword rankings fused per query text. Returns one ranked list of at most limit memories per query text."""
     result = await client.query(
-        resolve_memory_space(params.memory_space),
-        query_texts=params.queries,
-        n_results=params.limit,
-        where=params.where,
-        where_document=params.where_text,
+        resolve_memory_space(memory_space),
+        query_texts=queries,
+        n_results=limit,
+        where=where,
+        where_document=where_text,
         include=["documents", "metadatas"],
     )
-    return recalls_from(params.queries, result)
+    return recalls_from(queries, result)
 
 
 @records_tool
 async def list_memories(
-    params: ListMemoriesInput,
     ctx: Context,
+    memory_space: str | None = MemorySpaceField,
+    ids: list[str] | None = None,
+    where: dict[str, object] | None = WhereField,
+    where_text: dict[str, object] | None = WhereTextField,
+    limit: int | None = None,
+    offset: int | None = None,
     client: HybridClient = GetClientDep,
 ) -> list[Memory]:
-    """Fetch memories from a memory space with optional filtering."""
+    """Fetch memories from a memory space, by ID, filter, or page."""
     result = await client.get(
-        resolve_memory_space(params.memory_space),
-        ids=params.ids,
-        where=params.where,
-        where_document=params.where_text,
+        resolve_memory_space(memory_space),
+        ids=ids,
+        where=where,
+        where_document=where_text,
         include=["documents", "metadatas"],
-        limit=params.limit,
-        offset=params.offset,
+        limit=limit,
+        offset=offset,
     )
     return memories_from(result)
 
