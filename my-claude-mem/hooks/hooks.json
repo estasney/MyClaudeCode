@@ -6,9 +6,17 @@
         "hooks": [
           {
             "type": "command",
-            "command": "${CLAUDE_PLUGIN_ROOT}/scripts/ensure-venv.sh",
-            "args": [],
-            "timeout": 600
+            "command": "uv",
+            "args": [
+              "sync",
+              "--project",
+              "${CLAUDE_PLUGIN_ROOT}",
+              "--frozen",
+              "--no-dev",
+              "--no-python-downloads"
+            ],
+            "timeout": 600,
+            "statusMessage": "Syncing claude-memory environment"
           }
         ]
       }
