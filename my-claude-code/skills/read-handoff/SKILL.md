@@ -17,23 +17,33 @@ The first line is the handoff directory; the rest are existing handoffs, newest 
 </optional_user_argument>
 
 If it is empty, read the newest file. Otherwise grep the handoff files for it; if several match, list them and ask which to load.
-
 Read the chosen file and name it, so the user knows which one loaded.
-
 Then open what it lists under where the work sits, reading the named symbols. The note is a description of that code and may be behind it.
-
 Go no further. Take the conventions as given rather than checking them. Open what it lists under where to look only if a convention it states is unclear.
 
-Restate the remaining work as numbered items, in the note's order, one line each. Use your own words, not the note's — repeating it back verbatim shows nothing about what you understood. Say so where an item already looks done, or where the code no longer matches what the note claims.
+Handoffs may describe outstanding items. Some examples of how to address these:
 
-<example>
-[1] Add status, shipped_at, carrier and tracking_code to OrderResponse and OrderCreate in api/schemas/order.py.
-[2] Extend migrations/versions/8f21_add_order_shipping.py to set status and shipped_at NOT NULL once the backfill has run.
-[3] Fix the shipped_at serializer so it emits timestamptz. tests/api/test_orders.py fails on it now.
-</example>
+H: "Nothing has been committed"
+A: The user is solely responsible for this. Disregard.
 
-Then stop and wait. The user confirms the list, corrects an item, or strikes one, answering by number. Start nothing before they reply.
+H: "There is an unused import in File X"
+A: Trivial, and easily found with linters. Disregard. 
 
-Where the note leaves you short, ask the user. Do not go reading to fill the gap. A handoff that cannot be resumed from is worth knowing about, and a survey hides that by making it work anyway.
+H: "The scratchpad has a file called test_script.py"
+A: Scratchpad is ephemeral. Disregard.
 
-Once confirmed, take the first item still standing.
+H: "The README has not been updated to reflect X"
+A: Low priority. A "wrapping up" item. If code is still changing do not mention.
+
+H: "DB migration 0001 is not applied"
+A: Unless the codebase has no method to track migrations (unlikely), disregard.
+
+H: "The user has not ruled on whether to suppress type error X"
+A: Disregard. The user's prerogative.
+
+H: "The user expressed that the next session should refactor X as Y"
+A: High Priority. Mention and confirm
+
+Finally...
+
+Mention any high priority items. If you detect none, just confirm you've read and understood

@@ -8,15 +8,18 @@ disable-model-invocation: true
 
 You are serializing your context. A new session will read your handoff. 
 When writing, ask: "Would a new session, without context, understand what I'm talking about?"
-Write efficiently! Technical notes. Quick references. Ignore formatting. ascii notes. 
+Write efficiently! Technical notes. Quick references. Ignore formatting. ascii notes.
+Sentences may not use semicolons, em dashes or any other grammatical devices to extend sentence length.
+Do not be overly specific. "Ran data analysis script over 86 files, 2169 symbols and 4687 occurrences on commit fd474ce". This is trivia.  
+Do not rely on content from other handoffs. This must be self-contained.
 
 Write these, in this order.
 
 **Domain**
 
-one sentence about the repo.
-one overall sentence that would describe the discussion and work.
-one sentence per task completed.
+One sentence about the repo. What's it do?
+One overall sentence that would describe the discussion and work.
+One sentence per task completed.
 
 **Conventions**
 
@@ -35,7 +38,7 @@ If you resumed from another handoff you can include those.
 **Miscellany**
 
 <important>
-This is an optional section.
+This is an optional section. It is not a catch-all.
 </important>
 
 Before saving, one test. Could the next session take the next step, without hunting for where it goes, or working out how this area is written? If not, it is not ready.
