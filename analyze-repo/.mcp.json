@@ -1,0 +1,19 @@
+{
+  "mcpServers": {
+    "analyze-repo": {
+      "command": "uv",
+      "args": [
+        "run",
+        "--project",
+        "${CLAUDE_PLUGIN_ROOT}",
+        "--frozen",
+        "--no-dev",
+        "--no-python-downloads",
+        "analyze-repo"
+      ],
+      "env": {
+        "ANALYZE_REPO_DATA_DIR": "${CLAUDE_PLUGIN_DATA}"
+      }
+    }
+  }
+}

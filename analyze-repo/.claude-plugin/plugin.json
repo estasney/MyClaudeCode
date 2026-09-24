@@ -1,0 +1,9 @@
+{
+  "$schema": "https://anthropic.com/claude-code/plugin.schema.json",
+  "name": "analyze-repo",
+  "description": "Repository code intelligence: symbols and references from basedpyright, syntactic roles from tree-sitter, call edges and model-written summaries in sqlite, served over MCP.",
+  "author": {
+    "name": "estasney",
+    "email": "estasney@users.noreply.github.com"
+  }
+}

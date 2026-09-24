@@ -16,6 +16,11 @@
       "name": "python-lsp",
       "source": "./python-lsp",
       "description": "Python code intelligence: basedpyright and ruff behind a multiplexing proxy, registered as one language server. Type errors, navigation, and lint diagnostics together."
+    },
+    {
+      "name": "analyze-repo",
+      "source": "./analyze-repo",
+      "description": "Repository code intelligence: SCIP-indexed symbols, import and call graphs, and LLM summaries in sqlite, served over MCP."
     }
   ]
 }

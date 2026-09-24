@@ -1,0 +1,130 @@
+[project]
+name = "analyze-repo"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+authors = [
+    { name = "estasney", email = "estasney@users.noreply.github.com" }
+]
+requires-python = ">=3.12"
+dependencies = [
+    "aiosqlite>=0.22.1,<0.23.0",
+    "alembic>=1.20.0,<2.0.0",
+    "basedpyright>=1.40.1,<2.0.0",
+    "claude-agent-sdk>=0.2.157,<0.3.0",
+    "fastmcp>=4.0.5,<5.0.0",
+    "pydantic>=2.13.5,<3.0.0",
+    "pydantic-settings>=2.15.0,<3.0.0",
+    "sqlalchemy>=2.0.54,<3.0.0",
+    "tree-sitter>=0.26.0,<0.27.0",
+    "tree-sitter-language-pack>=1.20.0,<2.0.0",
+]
+
+
+[dependency-groups]
+dev = [
+    "hypothesis>=6.168.0,<7.0.0",
+    "pytest>=9.1.1,<10.0.0",
+    "pytest-asyncio>=1.4.0,<2.0.0",
+]
+
+[project.scripts]
+analyze-repo = "analyze_repo.server:main"
+
+[build-system]
+requires = ["uv_build>=0.12.17,<0.13.0"]
+build-backend = "uv_build"
+
+
+[tool.uv]
+add-bounds = "major"
+
+
+[tool.basedpyright]
+include = ["src"]
+extraPaths = ["src"]
+pythonVersion = "3.12"
+reportAny = false
+reportConstantRedefinition = false
+reportImplicitOverride = false
+reportImplicitStringConcatenation = false
+reportImportCycles = false
+reportMissingModuleSource = false
+reportMissingSuperCall = false
+reportUnannotatedClassAttribute = false
+reportUnknownLambdaType = false
+reportUnknownMemberType = false
+reportUnnecessaryComparison = false
+reportUnsafeMultipleInheritance = false
+reportUnusedCallResult = false
+reportUnusedImport = false
+reportUnusedParameter = false
+strictDictionaryInference = true
+strictListInference = true
+strictSetInference = true
+
+[tool.ruff.lint]
+select = [
+    "A",
+    "ANN",
+    "ASYNC",
+    "B",
+    "BLE",
+    "C4",
+    "DTZ",
+    "ERA",
+    "F",
+    "FA",
+    "FAST",
+    "FBT",
+    "FLY",
+    "FURB",
+    "I",
+    "INP",
+    "N",
+    "NPY",
+    "PD",
+    "PERF",
+    "PIE",
+    "PLC0105",
+    "PLC0131",
+    "PLC0132",
+    "PLC0207",
+    "PLC0208",
+    "PLE",
+    "PLR",
+    "PLW",
+    "PYI",
+    "RET",
+    "RUF",
+    "SIM",
+    "TRY",
+    "UP",
+    "YTT",
+]
+ignore = [
+    "A002",
+    "ANN002",
+    "ANN003",
+    "ANN202",
+    "ANN401",
+    "ASYNC119",
+    "N818",
+    "PLR0904",
+    "PLR0911",
+    "PLR0912",
+    "PLR0913",
+    "PLR0915",
+    "PLR0917",
+    "PLR2004",
+    "PLW0603",
+    "RET504",
+    "RUF001",
+    "RUF105",
+    "RUF106",
+    "RUF201",
+    "TRY003",
+    "UP051",
+]
+
+
