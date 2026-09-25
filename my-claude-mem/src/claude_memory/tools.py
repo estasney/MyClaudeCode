@@ -1,7 +1,6 @@
 # pyright: reportArgumentType=false
 import asyncio
 import time
-import uuid
 from datetime import UTC, datetime
 from typing import Annotated
 
@@ -45,10 +44,6 @@ WhereField = Field(default=None, description="Metadata filter.")
 WhereTextField = Field(default=None, description="Memory text filter.")
 
 
-def generate_memory_id() -> str:
-    return uuid.uuid4().hex
-
-
 def current_epoch_second() -> int:
     return int(time.time())
 
@@ -56,8 +51,9 @@ def current_epoch_second() -> int:
 class NewMemory(BaseModel):
     text: str = Field(description="Memory text.")
     id: str = Field(
-        default_factory=generate_memory_id,
-        description="Unique Memory ID; omit to generate one.",
+        description="Kebab-case mnemonic ID.",
+        min_length=1,
+        pattern=r"^[a-z0-9]+(-[a-z0-9]+)*$",
     )
     meta: dict[str, object] | None = Field(default=None, description="Memory metadata.")
     created_at: SkipJsonSchema[int] = Field(default_factory=current_epoch_second)
