@@ -3,7 +3,8 @@
     {
       "name": "basedpyright",
       "cmd": "uvx",
-      "args": ["--from", "basedpyright", "basedpyright-langserver", "--stdio"]
+      "args": ["--from", "basedpyright", "basedpyright-langserver", "--stdio"],
+      "pullDiagnostics": true
     },
     {
       "name": "ruff",

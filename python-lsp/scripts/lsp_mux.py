@@ -345,6 +345,14 @@ class DocumentId:
         return cls(key=key, is_file=True, uri=uri)
 
 
+@dataclass(slots=True, frozen=True)
+class OpenDocument:
+    """A document the client has open, under its own URI spelling, at its latest version."""
+
+    id: DocumentId
+    version: int | None
+
+
 class Membership(Enum):
     inside = auto()
     outside = auto()
@@ -421,6 +429,32 @@ def parse_publish_diagnostics(params: JsonValue) -> PublishDiagnostics | None:
     )
 
 
+def with_pull_diagnostics(capabilities: JsonValue) -> JsonObject:
+    """Client capabilities extended with pull diagnostics, which the mux answers.
+
+    A server that sees this stops publishing diagnostics on its own schedule
+    and waits to be asked, so every result it returns matches the document
+    version the mux asked about.
+    """
+    extended = copy.deepcopy(as_object(capabilities))
+    text_document = as_object(extended.get("textDocument"))
+    text_document["diagnostic"] = {"dynamicRegistration": True}
+    extended["textDocument"] = text_document
+    workspace = as_object(extended.get("workspace"))
+    workspace["diagnostics"] = {"refreshSupport": True}
+    extended["workspace"] = workspace
+    return extended
+
+
+def partition_by_method(
+    entries: list[JsonValue], method: str
+) -> tuple[list[JsonValue], list[JsonValue]]:
+    """Split registrations (or unregistrations) into those for method and the rest."""
+    matching = [entry for entry in entries if as_object(entry).get("method") == method]
+    rest = [entry for entry in entries if as_object(entry).get("method") != method]
+    return matching, rest
+
+
 def workspace_folder_uris(folders: JsonValue) -> list[str]:
     return [
         uri
@@ -467,6 +501,15 @@ def config_str_list(raw: JsonObject, key: str) -> tuple[str, ...]:
     return tuple(items)
 
 
+def config_bool(raw: JsonObject, key: str) -> bool:
+    value = raw.get(key)
+    if value is None:
+        return False
+    if not isinstance(value, bool):
+        raise TypeError(f"config field {key!r} must be a boolean")
+    return value
+
+
 def config_object(raw: JsonObject, key: str) -> JsonObject | None:
     value = raw.get(key)
     if value is None:
@@ -485,6 +528,8 @@ class ServerConfig:
     host: str = "127.0.0.1"
     initialization_options: JsonObject | None = None
     settings: JsonObject | None = None
+    # The mux pulls this server's diagnostics instead of taking its pushes.
+    pull_diagnostics: bool = False
 
     def __post_init__(self) -> None:
         if self.cmd is None and self.port is None:
@@ -502,6 +547,7 @@ class ServerConfig:
             host=config_str(raw, "host") or "127.0.0.1",
             initialization_options=config_object(raw, "initializationOptions"),
             settings=config_object(raw, "settings"),
+            pull_diagnostics=config_bool(raw, "pullDiagnostics"),
         )
 
 
@@ -510,6 +556,7 @@ DEFAULT_CONFIG: tuple[ServerConfig, ...] = (
         name="basedpyright",
         cmd="uvx",
         args=("--from", "basedpyright", "basedpyright-langserver", "--stdio"),
+        pull_diagnostics=True,
     ),
     ServerConfig(name="ruff", cmd="uvx", args=("ruff", "server")),
 )
@@ -678,15 +725,18 @@ class DocumentHold:
     """Diagnostics gate for a document with an in-flight edit.
 
     Created when didOpen/didChange passes through; merged publishes for the
-    document are withheld until every server has published for this version
-    (a publish without a version counts) or the settle timer expires. A
-    server staying silent past the timeout means its previous diagnostics
-    still stand, so the held slots are safe to emit.
+    document are withheld until every server has reported for this version
+    (a publish without a version counts). Once the settle timer expires, the
+    hold stops waiting for push servers, whose silence means their previous
+    diagnostics still stand. Pull servers are always waited for: their answer
+    for this version is already on its way, and anything they reported before
+    it describes older text.
     """
 
     version: int | None
     servers_reported: set[int]
     timer: asyncio.Task[None] | None = None
+    expired: bool = False
 
 
 def covers_held_version(hold: DocumentHold, version: int | None) -> bool:
@@ -840,8 +890,8 @@ class Proxy:
         self.diagnostics: dict[DocumentId, dict[int, list[JsonValue]]] = {}
         # document -> gate withholding merged publishes while an edit settles
         self.holds: dict[DocumentId, DocumentHold] = {}
-        # document -> the id carrying the client's own URI spelling
-        self.open_documents: dict[DocumentId, DocumentId] = {}
+        # document -> its client URI spelling and latest version
+        self.open_documents: dict[DocumentId, OpenDocument] = {}
         self.workspace: Workspace = Workspace(platform)
         # executeCommand command name -> server
         self.command_owners: dict[str, Server] = {}
@@ -854,7 +904,8 @@ class Proxy:
     def document(self, uri: str) -> DocumentId:
         """The client's id for this document when open, else a fresh one."""
         doc = DocumentId.from_uri(uri, self.platform)
-        return self.open_documents.get(doc, doc)
+        open_doc = self.open_documents.get(doc)
+        return doc if open_doc is None else open_doc.id
 
     # ---- lifecycle -------------------------------------------------------
 
@@ -957,6 +1008,11 @@ class Proxy:
                 self.track_client_state(method, params)
                 for server in self.servers:
                     await server.endpoint.notify(method, params)
+                # Pull only after the edit is written, so the answer covers it.
+                if (edited := self.edited_document(method, params)) is not None:
+                    for server in self.servers:
+                        if server.config.pull_diagnostics:
+                            self.pull_open_documents(server, first=edited)
             case _:
                 await self.primary.endpoint.notify(method, params)
 
@@ -1008,6 +1064,10 @@ class Proxy:
                     per_server["initializationOptions"] = None
                 case options:
                     per_server["initializationOptions"] = options
+            if server.config.pull_diagnostics:
+                per_server["capabilities"] = with_pull_diagnostics(
+                    request.get("capabilities")
+                )
             futures.append(server.send_request("initialize", per_server))
         results = [as_object(result) for result in await asyncio.gather(*futures)]
 
@@ -1160,7 +1220,7 @@ class Proxy:
         while (raw := await server.endpoint.read()) is not None:
             match parse_message(raw):
                 case Request() as request:
-                    await self.forward_server_request(server, request)
+                    await self.server_request(server, request)
                 case Notification(
                     method="textDocument/publishDiagnostics", params=params
                 ):
@@ -1177,6 +1237,41 @@ class Proxy:
             log(f"{server.name}: connection closed unexpectedly; returncode {code}")
             if server is self.primary:
                 self.exiting.set()
+
+    async def server_request(self, server: Server, request: Request) -> None:
+        """Answer a pull server's diagnostic bookkeeping here; forward the rest.
+
+        The client never advertised pull diagnostics, so their registrations
+        and refresh requests are the mux's to handle.
+        """
+        match request.method:
+            case "client/registerCapability" if server.config.pull_diagnostics:
+                await self.strip_pull_entries(server, request, "registrations")
+            case "client/unregisterCapability" if server.config.pull_diagnostics:
+                await self.strip_pull_entries(server, request, "unregisterations")
+            case "workspace/diagnostic/refresh" if server.config.pull_diagnostics:
+                await server.endpoint.send(Response(request.id, result=None))
+                self.pull_open_documents(server)
+            case _:
+                await self.forward_server_request(server, request)
+
+    async def strip_pull_entries(
+        self, server: Server, request: Request, key: str
+    ) -> None:
+        """Drop textDocument/diagnostic entries; the mux pulls whatever is registered."""
+        params = as_object(request.params)
+        pulls, rest = partition_by_method(
+            as_list(params.get(key)), "textDocument/diagnostic"
+        )
+        debug(f"{server.name}: {request.method} consumed", pulls)
+        if not rest:
+            await server.endpoint.send(Response(request.id, result=None))
+            return
+        forwarded = dict(params)
+        forwarded[key] = rest
+        await self.forward_server_request(
+            server, Request(request.id, request.method, forwarded)
+        )
 
     async def forward_server_request(self, server: Server, request: Request) -> None:
         self.next_client_id += 1
@@ -1200,8 +1295,11 @@ class Proxy:
             "key",
             doc.key,
             "open docs",
-            [open_doc.uri for open_doc in self.open_documents.values()],
+            [open_doc.id.uri for open_doc in self.open_documents.values()],
         )
+        if server.config.pull_diagnostics and doc in self.open_documents:
+            debug(f"{server.name}: ignoring push for open {doc.uri}; it is pulled")
+            return
         match self.workspace.membership(doc):
             case Membership.outside:
                 debug(
@@ -1214,14 +1312,24 @@ class Proxy:
                 return
             case Membership.inside | Membership.unfiltered:
                 pass
+        await self.accept_diagnostics(server, doc, publish.version, publish.diagnostics)
+
+    async def accept_diagnostics(
+        self,
+        server: Server,
+        doc: DocumentId,
+        version: int | None,
+        diagnostics: list[JsonValue],
+    ) -> None:
+        """Store one server's diagnostics for a document; emit unless a hold waits."""
         per_doc = self.diagnostics.setdefault(doc, {})
-        per_doc[server.index] = publish.diagnostics
+        per_doc[server.index] = diagnostics
         hold = self.holds.get(doc)
         if hold is None:
             debug(f"{server.name}: no hold for {doc.uri}; emitting now")
-            await self.emit_merged(doc, version=publish.version)
+            await self.emit_merged(doc, version=version)
             return
-        if covers_held_version(hold, publish.version):
+        if covers_held_version(hold, version):
             hold.servers_reported.add(server.index)
         debug(
             f"{server.name}: hold version {hold.version};",
@@ -1230,9 +1338,61 @@ class Proxy:
             "of",
             len(self.servers),
         )
-        if len(hold.servers_reported) == len(self.servers):
+        if self.hold_satisfied(hold):
             self.release_hold(doc)
             await self.emit_merged(doc, version=hold.version)
+
+    # ---- pulled diagnostics -----------------------------------------------
+
+    def edited_document(self, method: str, params: JsonValue) -> DocumentId | None:
+        """The document an open or change notification put new text into."""
+        match method:
+            case "textDocument/didOpen" | "textDocument/didChange":
+                ref = parse_text_document(params)
+                return None if ref is None else self.document(ref.uri)
+            case _:
+                return None
+
+    def pull_open_documents(
+        self, server: Server, first: DocumentId | None = None
+    ) -> None:
+        """Ask a pull server about every open document, first ahead of the rest.
+
+        An edit to one document can change the diagnostics of any document
+        that imports it, so every open document is asked again.
+        """
+        open_docs = list(self.open_documents.values())
+        ordered = [doc for doc in open_docs if doc.id == first] + [
+            doc for doc in open_docs if doc.id != first
+        ]
+        for open_doc in ordered:
+            if self.workspace.membership(open_doc.id) is not Membership.outside:
+                self.tasks.spawn(self.pull(server, open_doc))
+
+    async def pull(self, server: Server, open_doc: OpenDocument) -> None:
+        """Request one document's diagnostics and accept them if still current.
+
+        A failed pull counts as an empty report, so a hold waiting on it can
+        still release.
+        """
+        params: JsonObject = {"textDocument": {"uri": open_doc.id.uri}}
+        try:
+            report = await server.send_request("textDocument/diagnostic", params)
+            diagnostics = as_list(as_object(report).get("items"))
+        except RemoteError as exc:
+            log(f"{server.name}: pull for {open_doc.id.uri} failed:", exc)
+            diagnostics = []
+        if self.open_documents.get(open_doc.id) != open_doc:
+            debug(
+                f"{server.name}: pull for {open_doc.id.uri}",
+                "version",
+                open_doc.version,
+                "superseded; dropping",
+            )
+            return
+        await self.accept_diagnostics(
+            server, open_doc.id, open_doc.version, diagnostics
+        )
 
     # ---- diagnostics settling ---------------------------------------------
 
@@ -1244,14 +1404,17 @@ class Proxy:
                     return
                 doc = DocumentId.from_uri(ref.uri, self.platform)
                 debug("didOpen", ref.uri, "version", ref.version, "key", doc.key)
-                self.open_documents[doc] = doc
+                self.open_documents[doc] = OpenDocument(doc, ref.version)
                 self.begin_hold(doc, ref.version)
             case "textDocument/didChange":
                 ref = parse_text_document(params)
                 if ref is None:
                     return
                 debug("didChange", ref.uri, "version", ref.version)
-                self.begin_hold(self.document(ref.uri), ref.version)
+                doc = self.document(ref.uri)
+                if doc in self.open_documents:
+                    self.open_documents[doc] = OpenDocument(doc, ref.version)
+                self.begin_hold(doc, ref.version)
             case "textDocument/didClose":
                 ref = parse_text_document(params)
                 if ref is None:
@@ -1283,17 +1446,31 @@ class Proxy:
         if hold is not None and hold.timer is not None and not hold.timer.cancel():
             debug("hold timer for", doc.uri, "had already finished")
 
+    def hold_satisfied(self, hold: DocumentHold) -> bool:
+        """Whether every server the hold still waits for has reported."""
+        awaited = {
+            server.index
+            for server in self.servers
+            if server.config.pull_diagnostics or not hold.expired
+        }
+        return awaited <= hold.servers_reported
+
     async def expire_hold(self, doc: DocumentId) -> None:
         await asyncio.sleep(self.settle_seconds)
-        hold = self.holds.pop(doc, None)
-        if hold is not None:
-            debug(
-                f"hold expired for {doc.uri};",
-                "reported",
-                sorted(hold.servers_reported),
-                "of",
-                len(self.servers),
-            )
+        hold = self.holds.get(doc)
+        if hold is None:
+            return
+        hold.expired = True
+        hold.timer = None  # this task: releasing the hold must not cancel it
+        debug(
+            f"hold expired for {doc.uri};",
+            "reported",
+            sorted(hold.servers_reported),
+            "of",
+            len(self.servers),
+        )
+        if self.hold_satisfied(hold):
+            self.release_hold(doc)
             await self.emit_merged(doc, version=hold.version)
 
     async def emit_merged(self, doc: DocumentId, version: int | None) -> None:
