@@ -50,7 +50,9 @@ The command also works where there is no terminal picker: in [non-interactive mo
 * Run `/advisor` with a model, such as `/advisor opus`, to set it.
 * Run `/advisor off` to turn it off.
 
-Claude Code doesn't invoke a saved advisor that your organization's [`availableModels`](/docs/en/model-config#restrict-model-selection) allowlist excludes. To use the advisor, pick an allowed model with `/advisor`. Claude Code still saves an advisor that your current main model doesn't support. That advisor activates after you switch to a [compatible main model](#choose-an-advisor-model) with [`/model`](/docs/en/model-config#setting-your-model).
+Claude Code doesn't invoke a saved advisor that your organization's [`availableModels`](/docs/en/model-config#restrict-model-selection) allowlist excludes. To use the advisor, pick an allowed model with `/advisor`.
+
+Claude Code still saves an advisor that your current main model doesn't support. That advisor activates after you switch to a [compatible main model](#choose-an-advisor-model) with [`/model`](/docs/en/model-config#setting-your-model). If the API already refused the saved advisor in the current conversation, it stays off until `/clear` or `/compact`, even after you switch models.
 
 On some plans, Fable as the advisor also needs your one-time [consent to bill Fable usage to usage credits](/docs/en/model-config#fable-and-usage-credits). For what `/advisor fable` does before you have given that consent, see [Fable advisor and usage credits](#fable-advisor-and-usage-credits).
 
@@ -85,24 +87,27 @@ If you start a [background session](/docs/en/agent-view) with `--advisor` and on
 
 The advisor must be at least as capable as the main model. The accepted advisors for each main model are:
 
-| Main model           | Accepted advisors                    | Notes                                                                                                                                                                         |
-| -------------------- | ------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Haiku 4.5            | Fable, Opus, Sonnet                  | Haiku can call the advisor but cannot act as one                                                                                                                              |
-| Sonnet 4.6           | Fable, Opus, Sonnet                  |                                                                                                                                                                               |
-| Sonnet 5             | Fable, Opus, Sonnet 5                | A Sonnet 4.6 advisor is rejected                                                                                                                                              |
-| Opus 4.6             | Fable, Opus, Sonnet 5                | Sonnet 5 and Opus 4.6 are ranked as equally capable, so an Opus 4.6 main accepts a Sonnet 5 advisor                                                                           |
-| Opus 4.7 or later    | Fable, and Opus 4.7 or later         | Opus 4.7 and later Opus models are ranked as equally capable, so any of them accepts another as an advisor. An Opus 4.7 main with an Opus 4.6 or Sonnet 5 advisor is rejected |
-| Fable 5.1 or Fable 5 | Fable 5.1, or the same Fable version | An Opus or Sonnet advisor is rejected, and so is a Fable 5 advisor for a Fable 5.1 main model                                                                                 |
+| Main model           | Accepted advisors                  | Notes                                                                                          |
+| -------------------- | ---------------------------------- | ---------------------------------------------------------------------------------------------- |
+| Haiku 4.5            | Fable, Opus, Sonnet                | Haiku can call the advisor but cannot act as one                                               |
+| Sonnet 4.6           | Fable, Opus, Sonnet                |                                                                                                |
+| Sonnet 5             | Fable, Opus 4.7 or later, Sonnet 5 | A Sonnet 4.6 advisor is rejected, and the API refuses an Opus 4.6 advisor                      |
+| Opus 4.6             | Fable, Opus, Sonnet 5              | A Sonnet 4.6 advisor is rejected                                                               |
+| Opus 4.7 or Opus 4.8 | Fable, and Opus 4.7 or later       | An Opus 4.6 or Sonnet advisor is rejected                                                      |
+| Opus 5.5 or Opus 5   | Fable, and Opus 5 or later         | An Opus 4.6 or Sonnet advisor is rejected, and the API refuses an Opus 4.7 or Opus 4.8 advisor |
+| Fable 5              | Fable 5.1 or Fable 5               | An Opus or Sonnet advisor is rejected                                                          |
+| Fable 5.1            | Fable 5.1                          | An Opus or Sonnet advisor is rejected, and the API refuses a Fable 5 advisor                   |
 
 Fable 5.1 requires Claude Code v2.1.257 or later. Both Fable models require [Fable access](/docs/en/model-config#work-with-fable).
 
-Set the advisor as `fable`, `opus`, or `sonnet`. These aliases resolve to Claude Code's built-in default version for each model family, which advances with new Claude Code releases. You can also pass a full model ID such as `claude-opus-5`.
+Set the advisor as `fable`, `opus`, or `sonnet`. These aliases resolve to Claude Code's built-in default version for each model family, which advances with new Claude Code releases. You can also pass a full model ID such as `claude-opus-5-5`.
 
 Subagents inherit the configured advisor and apply the same pairing check against their own model.
 
-Claude Code validates the pairing before sending a request:
+Claude Code validates the pairing before sending a request, and the API validates it again:
 
-* If the advisor is less capable than the main model, the advisor is not attached to the main model's requests. The `/advisor` command output and a notification show this. Subagents whose own model satisfies the pairing may still use the advisor.
+* For an advisor the table lists as rejected, Claude Code doesn't attach it to the main model's requests. The `/advisor` command output and a notification show this. Subagents whose own model satisfies the pairing may still use the advisor.
+* For an advisor the table lists as refused by the API, Claude Code attaches it and the API refuses it. Claude Code then resends that request without the advisor, and the rest of the conversation runs without one, so you see no error and get no advisor calls. Pick an accepted advisor with `/advisor`; the change takes effect after `/clear` or `/compact` and in new sessions.
 * If the main model or the advisor is a model Claude Code does not recognize, the advisor is not attached.
 
 ### Fable advisor and usage credits
@@ -138,6 +143,7 @@ When Claude calls the advisor, the transcript shows an `Advising` line with the 
 
 * **Reviewed**: the line confirms that the advisor has reviewed the conversation. When the advisor returned readable guidance, press `Ctrl+O` to read it.
 * **Declined**: the line reads `Advisor declined to advise on this request`. If the advisor gave a reason, press `Ctrl+O` to read it.
+* **Unavailable**: the advisor call failed, and the line reads `Advisor unavailable (<error_code>)`, where `<error_code>` is the code the call returned.
 
 Claude generally follows the advisor's guidance, but adapts when its own evidence contradicts a specific claim: if a recommended step fails when tried, or the file contents contradict the advice, Claude surfaces the conflict rather than following the guidance unconditionally.
 
@@ -166,7 +172,7 @@ The advisor model's own read of the conversation is not cached. Each advisor cal
 
 The advisor tool requires all of the following:
 
-* **Anthropic API only**: the advisor is a server-executed tool. It is not available on Amazon Bedrock, Claude Platform on AWS, Google Cloud's Agent Platform, or Microsoft Foundry. Through an [LLM gateway](/docs/en/llm-gateway) configured with `ANTHROPIC_BASE_URL`, availability depends on whether the gateway forwards the request intact to the Anthropic API.
+* **Anthropic API only**: the advisor is a server-executed tool. It is not available on Amazon Bedrock, Claude Platform on AWS, Google Cloud's Agent Platform, or Microsoft Foundry. Through an [LLM gateway](/docs/en/llm-gateway) configured with `ANTHROPIC_BASE_URL`, availability depends on whether the gateway forwards the request intact to the Anthropic API. If the gateway or its upstream doesn't recognize the advisor tool, see [Automatic retry and error forwarding](/docs/en/llm-gateway-protocol#automatic-retry-and-error-forwarding) for how Claude Code responds.
 * **Supported main model**: Fable, Opus 4.6 or later, Sonnet 4.6 or later, or Haiku 4.5. See [Choose an advisor model](#choose-an-advisor-model) for which advisors each accepts.
 * **Feature-flag fetching**: Claude Code turns the advisor on through a feature flag it fetches from Anthropic. In a session where a variable that turns flag fetching off is set, such as `DISABLE_TELEMETRY`, the advisor stays off. See [Features that need feature-flag fetching](/docs/en/env-vars#features-that-need-feature-flag-fetching).
 
