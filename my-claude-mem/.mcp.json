@@ -1,6 +1,6 @@
 {
   "mcpServers": {
-    "memory": {
+    "vexicon": {
       "command": "uv",
       "args": [
         "run",

@@ -21,7 +21,7 @@ def create_chroma_client(settings: Settings) -> ClientAPI:
     )
 
 
-def memory_lifespan(client: "HybridClient") -> Lifespan:
+def hybrid_client_lifespan(client: "HybridClient") -> Lifespan:
     """Rebuilds the SQL index at startup, publishes the hybrid client to tools, and disposes the SQL engine on shutdown."""
 
     @lifespan

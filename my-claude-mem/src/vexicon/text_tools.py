@@ -52,7 +52,7 @@ def render_cell(value: object) -> str:
 
 def render_table(model: type[BaseModel], rows: Iterable[BaseModel]) -> str:
     """Columns padded to their widest cell, two spaces apart, like ``docker ps``."""
-    columns = list(model.model_fields)
+    columns = list(model.model_json_schema(mode="serialization")["properties"])
     grid = [columns]
     for row in rows:
         dumped = row.model_dump(mode="json")
@@ -77,7 +77,8 @@ def render_records(records: Iterable[BaseModel]) -> str:
 def render_record(record: BaseModel) -> str:
     """One ``field: value`` line per field; nested models and multi-line text go indented under the field name."""
     lines: list[str] = []
-    for field in type(record).model_fields:
+    dumped = record.model_dump(mode="json")
+    for field in dumped:
         match getattr(record, field):
             case [BaseModel(), *_] as models:
                 lines.append(f"{field}:")
@@ -89,8 +90,7 @@ def render_record(record: BaseModel) -> str:
                 lines.append(f"{field}:")
                 lines.append(indent(text))
             case _:
-                dumped = record.model_dump(mode="json", include={field})[field]
-                lines.append(f"{field}: {render_cell(dumped)}")
+                lines.append(f"{field}: {render_cell(dumped[field])}")
     return "\n".join(lines)
 
 

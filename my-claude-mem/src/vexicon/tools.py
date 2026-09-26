@@ -5,11 +5,12 @@ from datetime import UTC, datetime
 from typing import Annotated
 
 from chromadb import GetResult
-from chromadb.api.types import Metadata, QueryResult
+from chromadb.api.types import CollectionMetadata, Metadata, QueryResult
 from fastmcp.dependencies import Depends
+from fastmcp.exceptions import ToolError
 from fastmcp.server.context import Context
 from fastmcp.tools import ToolResult
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, computed_field
 from pydantic.json_schema import SkipJsonSchema
 
 from vexicon.client.hybrid_client import HybridClient
@@ -19,108 +20,141 @@ from vexicon.text_tools import lines_tool, record_tool, records_tool, table_tool
 
 GetClientDep = Depends(borrow_hybrid_client)
 
-MemorySpaceName = Annotated[
+SpaceName = Annotated[
     str,
     Field(
         min_length=3,
         max_length=63,
         pattern=r"^[a-zA-Z0-9][a-zA-Z0-9._-]*[a-zA-Z0-9]$",
-        description="Memory space name.",
+        description="Space name.",
     ),
 ]
 
+Readme = Annotated[
+    str,
+    Field(description="What the space holds and the conventions its entries follow."),
+]
+
 WhereField = Field(default=None, description="Metadata filter.")
-WhereTextField = Field(default=None, description="Memory text filter.")
+WhereTextField = Field(default=None, description="Entry text filter.")
 
 
 def current_epoch_second() -> int:
     return int(time.time())
 
 
-class NewMemory(BaseModel):
-    text: str = Field(description="Memory text.")
+class NewEntry(BaseModel):
+    text: str = Field(
+        description="Entry text within half of the space's embedding_max_tokens."
+    )
     id: str = Field(
         description="Kebab-case mnemonic ID.",
         min_length=1,
         pattern=r"^[a-z0-9]+(-[a-z0-9]+)*$",
     )
-    meta: dict[str, object] | None = Field(default=None, description="Memory metadata.")
+    meta: dict[str, object] | None = Field(default=None, description="Entry metadata.")
     created_at: SkipJsonSchema[int] = Field(default_factory=current_epoch_second)
 
 
-class ReviseInput(BaseModel):
-    ids: list[str] = Field(description="IDs of memories to revise.")
-    memory_space: MemorySpaceName
+class UpdateEntriesInput(BaseModel):
+    ids: list[str] = Field(description="IDs of entries to update.")
+    space: SpaceName
     metadata: list[dict[str, object]] | None = Field(
         default=None, description="New metadata per ID."
     )
-    memories: list[str] | None = Field(
-        default=None, description="New memory text per ID."
+    texts: list[str] | None = Field(default=None, description="New entry text per ID.")
+
+
+class SpaceSummary(BaseModel):
+    name: str = Field(description="Space name.")
+    metadata_raw: CollectionMetadata | None = Field(exclude=True)
+
+    @computed_field(
+        description="What the space holds and the conventions its entries follow."
     )
+    @property
+    def readme(self) -> str | None:
+        return (self.metadata_raw or {}).get("readme")
+
+    @computed_field(description="Token cap per entry before truncation.")
+    @property
+    def embedding_max_tokens(self) -> int | None:
+        return (self.metadata_raw or {}).get("embedding_max_tokens")
+
+    @computed_field(description="Embedding model set at creation.")
+    @property
+    def embedding_repo_id(self) -> str | None:
+        return (self.metadata_raw or {}).get("embedding_repo_id")
+
+    @computed_field(description="Other space metadata.")
+    @property
+    def metadata(self) -> dict[str, object] | None:
+        known = {"readme", "embedding_max_tokens", "embedding_repo_id"}
+        rest = {
+            key: value
+            for key, value in (self.metadata_raw or {}).items()
+            if key not in known
+        }
+        return rest or None
 
 
-class MemorySpaceSummary(BaseModel):
-    name: str = Field(description="Memory space name.")
-    metadata: dict[str, object] | None = Field(
-        description="Memory space metadata; embedding_max_tokens is the absolute "
-        "per-memory token cap (aim for half that per chunk), and embedding_repo_id "
-        "names the model when one was set at creation."
-    )
+class Entry(BaseModel):
+    id: str = Field(description="Entry ID.")
+    text: str | None = Field(description="Entry text.")
+    metadata_raw: Metadata | None = Field(exclude=True)
+
+    @computed_field(description="When the entry was stored.")
+    @property
+    def created(self) -> datetime | None:
+        created_at = (self.metadata_raw or {}).get("created_at")
+        if isinstance(created_at, int | float):
+            return datetime.fromtimestamp(created_at, tz=UTC)
+        return None
+
+    @computed_field(description="Other entry metadata.")
+    @property
+    def metadata(self) -> Metadata | None:
+        rest = {
+            key: value
+            for key, value in (self.metadata_raw or {}).items()
+            if key != "created_at"
+        }
+        return rest or None
 
 
-class Memory(BaseModel):
-    id: str = Field(description="Memory ID.")
-    created: datetime | None = Field(description="When the memory was stored.")
-    metadata: dict[str, object] | None = Field(
-        description="Metadata other than created_at; None when there is none."
-    )
-    text: str | None = Field(description="Memory text.")
-
-
-def memory_from(memory_id: str, text: str | None, metadata: Metadata | None) -> Memory:
-    rest = dict(metadata or {})
-    created_at = rest.pop("created_at", None)
-    return Memory(
-        id=memory_id,
-        created=datetime.fromtimestamp(created_at, tz=UTC)
-        if isinstance(created_at, int | float)
-        else None,
-        metadata=rest or None,
-        text=text,
-    )
-
-
-def memories_from(result: GetResult) -> list[Memory]:
+def entries_from(result: GetResult) -> list[Entry]:
     documents = result.get("documents") or []
     metadatas = result.get("metadatas") or []
     return [
-        memory_from(
-            memory_id,
-            documents[index] if index < len(documents) else None,
-            metadatas[index] if index < len(metadatas) else None,
+        Entry(
+            id=entry_id,
+            text=documents[index] if index < len(documents) else None,
+            metadata_raw=metadatas[index] if index < len(metadatas) else None,
         )
-        for index, memory_id in enumerate(result["ids"])
+        for index, entry_id in enumerate(result["ids"])
     ]
 
 
-class Recall(BaseModel):
-    query: str = Field(description="The query text these memories answer.")
-    memories: list[Memory] = Field(description="Memories ranked by fused score.")
+class SearchResult(BaseModel):
+    query: str = Field(description="The query text these entries answer.")
+    entries: list[Entry] = Field(description="Entries ranked by fused score.")
 
 
-def recalls_from(queries: list[str], result: QueryResult) -> list[Recall]:
+def search_results_from(queries: list[str], result: QueryResult) -> list[SearchResult]:
     documents = result.get("documents") or []
     metadatas = result.get("metadatas") or []
     return [
-        Recall(
+        SearchResult(
             query=query,
-            memories=[
-                memory_from(
-                    memory_id,
-                    documents[phrase][index] if phrase < len(documents) else None,
-                    metadatas[phrase][index] if phrase < len(metadatas) else None,
+            entries=[
+                Entry(
+                    id=entry_id,
+                    text=documents[phrase][index] if phrase < len(documents) else None,
+                    metadata_raw=metadatas[phrase][index]
+                    if phrase < len(metadatas)
+                    else None,
                 )
-                for index, memory_id in enumerate(phrase_ids)
+                for index, entry_id in enumerate(phrase_ids)
             ],
         )
         for phrase, (query, phrase_ids) in enumerate(
@@ -129,142 +163,165 @@ def recalls_from(queries: list[str], result: QueryResult) -> list[Recall]:
     ]
 
 
-class MemorySpaceInfo(MemorySpaceSummary):
-    id: str = Field(description="Memory space ID.")
-    count: int = Field(description="Number of memories stored.")
-    sample: list[Memory] = Field(description="The first few memories.")
+class SpaceInfo(SpaceSummary):
+    id: str = Field(description="Space ID.")
+    count: int = Field(description="Number of entries stored.")
+    sample: list[Entry] = Field(description="The first few entries.")
 
 
 @table_tool
-async def list_memory_spaces(
+async def list_spaces(
     ctx: Context,
     limit: int | None = None,
     offset: int | None = None,
     client: HybridClient = GetClientDep,
-) -> list[MemorySpaceSummary]:
-    """List all memory spaces with their metadata, with optional pagination."""
+) -> list[SpaceSummary]:
+    """List spaces with their metadata."""
     cols = await client.list_collections(limit=limit, offset=offset)
-    return [MemorySpaceSummary(name=c.name, metadata=c.metadata) for c in cols]
+    return [SpaceSummary(name=c.name, metadata_raw=c.metadata) for c in cols]
 
 
 @lines_tool
 async def list_embedding_models(ctx: Context) -> list[str]:
-    """List repo_ids of locally available sentence-transformer embedding models.
-
-    Any of these is a valid repo_id for create_memory_space; omitting repo_id
-    uses the default embedding function.
-    """
+    """List the embedding model repo_ids that create_space accepts."""
     return await asyncio.to_thread(list_local_repo_ids)
 
 
-async def create_memory_space(
-    memory_space: MemorySpaceName,
+async def create_space(
+    space: SpaceName,
     ctx: Context,
-    repo_id: str | None = None,
-    metadata: dict[str, object] | None = None,
+    readme: Readme | None = None,
+    embedding_repo_id: Annotated[
+        str | None,
+        Field(
+            description="Hugging Face repo_id from list_embedding_models of the "
+            "sentence-transformer model that embeds this space's entries."
+        ),
+    ] = None,
+    metadata: Annotated[
+        dict[str, object] | None, Field(description="Other space metadata.")
+    ] = None,
     client: HybridClient = GetClientDep,
 ) -> ToolResult:
-    """Create a new memory space; repo_id picks a HF sentence-transformer model, e.g. sentence-transformers/multi-qa-mpnet-base-cos-v1.
-
-    If the user asks for a specific model, verify it against list_embedding_models first; omit repo_id to use the default embedding function.
-    """
+    """Create a space."""
+    space_metadata = dict(metadata or {})
+    if readme is not None:
+        space_metadata["readme"] = readme
     await client.create_collection(
-        name=memory_space, repo_id=repo_id, metadata=metadata
+        name=space, repo_id=embedding_repo_id, metadata=space_metadata
     )
     await ctx.session.send_resource_list_changed()
-    return ToolResult(content=f"Created memory space {memory_space!r}.")
+    return ToolResult(content=f"Created space {space!r}.")
 
 
 @record_tool
-async def describe_memory_space(
-    memory_space: MemorySpaceName,
+async def describe_space(
+    space: SpaceName,
     ctx: Context,
     sample_size: int = 5,
     client: HybridClient = GetClientDep,
-) -> MemorySpaceInfo:
-    """Return name, id, metadata, memory count, and the first few memories of a memory space."""
-    col = await client.get_collection(memory_space)
-    count = await client.count(memory_space)
-    sample = await client.peek(memory_space, limit=sample_size)
-    return MemorySpaceInfo(
+) -> SpaceInfo:
+    """Show a space with its entry count and first entries."""
+    col = await client.get_collection(space)
+    count = await client.count(space)
+    sample = await client.peek(space, limit=sample_size)
+    return SpaceInfo(
         name=col.name,
         id=str(col.id),
-        metadata=col.metadata,
+        metadata_raw=col.metadata,
         count=count,
-        sample=memories_from(sample),
+        sample=entries_from(sample),
     )
 
 
-async def rename_memory_space(
-    memory_space: MemorySpaceName,
-    new_name: MemorySpaceName,
+def merged_space_metadata(
+    current: CollectionMetadata | None, changes: dict[str, object]
+) -> CollectionMetadata:
+    managed = {"embedding_repo_id", "embedding_max_tokens"} & changes.keys()
+    if managed:
+        raise ToolError(f"Server-managed metadata keys: {', '.join(sorted(managed))}")
+    merged = {**(current or {}), **changes}
+    return {key: value for key, value in merged.items() if value is not None}
+
+
+async def update_space(
+    space: SpaceName,
     ctx: Context,
+    new_name: SpaceName | None = None,
+    readme: Readme | None = None,
+    metadata: dict[str, object] | None = None,
     client: HybridClient = GetClientDep,
 ) -> ToolResult:
-    """Rename a memory space."""
-    await client.modify(memory_space, name=new_name)
-    await ctx.session.send_resource_list_changed()
-    return ToolResult(content=f"Renamed memory space {memory_space!r} to {new_name!r}.")
+    """Rename a space or change its metadata.
 
-
-async def delete_memory_space(
-    memory_space: MemorySpaceName,
-    ctx: Context,
-    client: HybridClient = GetClientDep,
-) -> ToolResult:
-    """Delete a memory space and every memory in it."""
-    await client.delete_collection(memory_space)
-    await ctx.session.send_resource_list_changed()
-    return ToolResult(content=f"Deleted memory space {memory_space!r}.")
-
-
-async def remember(
-    memories: list[NewMemory],
-    memory_space: MemorySpaceName,
-    ctx: Context,
-    client: HybridClient = GetClientDep,
-) -> ToolResult:
+    Metadata keys merge into the current metadata; a null value removes the key.
     """
-    Store memories.
-    The memory space's embedding_max_tokens (see list_memory_spaces) is the absolute per-memory cap; longer text is silently truncated before embedding.
-    Chunk long text to roughly half that cap for best embedding quality.
-    Recommend to include the project_dir in metadata
-    """
-    ids = [memory.id for memory in memories]
-    documents = [memory.text for memory in memories]
+    changes = dict(metadata or {})
+    if readme is not None:
+        changes["readme"] = readme
+    merged = None
+    if changes:
+        col = await client.get_collection(space)
+        merged = merged_space_metadata(col.metadata, changes)
+    await client.modify(space, name=new_name, metadata=merged)
+    if new_name is not None:
+        await ctx.session.send_resource_list_changed()
+    return ToolResult(content=f"Updated space {(new_name or space)!r}.")
+
+
+async def delete_space(
+    space: SpaceName,
+    ctx: Context,
+    client: HybridClient = GetClientDep,
+) -> ToolResult:
+    """Delete a space and every entry in it."""
+    await client.delete_collection(space)
+    await ctx.session.send_resource_list_changed()
+    return ToolResult(content=f"Deleted space {space!r}.")
+
+
+async def add_entries(
+    entries: list[NewEntry],
+    space: SpaceName,
+    ctx: Context,
+    client: HybridClient = GetClientDep,
+) -> ToolResult:
+    """Store entries that follow the space readme."""
+    ids = [entry.id for entry in entries]
+    documents = [entry.text for entry in entries]
     metadatas = [
-        {**(memory.meta or {}), "created_at": memory.created_at} for memory in memories
+        {**(entry.meta or {}), "created_at": entry.created_at} for entry in entries
     ]
-    await client.add(memory_space, ids=ids, documents=documents, metadatas=metadatas)
-    lines = [f"Stored {len(ids)} memories in {memory_space!r}.", *ids]
+    await client.add(space, ids=ids, documents=documents, metadatas=metadatas)
+    lines = [f"Stored {len(ids)} entries in {space!r}.", *ids]
     return ToolResult(content="\n".join(lines))
 
 
 @records_tool
-async def recall(
+async def search(
     queries: list[str],
-    memory_space: MemorySpaceName,
+    space: SpaceName,
     ctx: Context,
-    limit: int = 5,
+    limit: Annotated[int, Field(description="Maximum entries per query.")] = 5,
     where: dict[str, object] | None = WhereField,
     where_text: dict[str, object] | None = WhereTextField,
     client: HybridClient = GetClientDep,
-) -> list[Recall]:
-    """Hybrid search over a memory space: vector and keyword rankings fused per query text. Returns one ranked list of at most limit memories per query text."""
+) -> list[SearchResult]:
+    """Search a space for each query."""
     result = await client.query(
-        memory_space,
+        space,
         query_texts=queries,
         n_results=limit,
         where=where,
         where_document=where_text,
         include=["documents", "metadatas"],
     )
-    return recalls_from(queries, result)
+    return search_results_from(queries, result)
 
 
 @records_tool
-async def list_memories(
-    memory_space: MemorySpaceName,
+async def list_entries(
+    space: SpaceName,
     ctx: Context,
     ids: list[str] | None = None,
     where: dict[str, object] | None = WhereField,
@@ -272,10 +329,10 @@ async def list_memories(
     limit: int | None = None,
     offset: int | None = None,
     client: HybridClient = GetClientDep,
-) -> list[Memory]:
-    """Fetch memories from a memory space, by ID, filter, or page."""
+) -> list[Entry]:
+    """Fetch entries from a space."""
     result = await client.get(
-        memory_space,
+        space,
         ids=ids,
         where=where,
         where_document=where_text,
@@ -283,47 +340,45 @@ async def list_memories(
         limit=limit,
         offset=offset,
     )
-    return memories_from(result)
+    return entries_from(result)
 
 
-async def revise(
-    params: ReviseInput,
+async def update_entries(
+    params: UpdateEntriesInput,
     ctx: Context,
     client: HybridClient = GetClientDep,
 ) -> ToolResult:
-    """Revise the text or metadata of memories by ID."""
+    """Update the text or metadata of entries by ID."""
     await client.update(
-        params.memory_space,
+        params.space,
         ids=params.ids,
         metadatas=params.metadata,
-        documents=params.memories,
+        documents=params.texts,
     )
-    return ToolResult(
-        content=f"Revised {len(params.ids)} memories in {params.memory_space!r}."
-    )
+    return ToolResult(content=f"Updated {len(params.ids)} entries in {params.space!r}.")
 
 
-async def forget(
+async def delete_entries(
     ids: list[str],
-    memory_space: MemorySpaceName,
+    space: SpaceName,
     ctx: Context,
     client: HybridClient = GetClientDep,
 ) -> ToolResult:
-    """Delete memories by ID."""
-    await client.delete(memory_space, ids=ids)
-    return ToolResult(content=f"Forgot {len(ids)} memories in {memory_space!r}.")
+    """Delete entries by ID."""
+    await client.delete(space, ids=ids)
+    return ToolResult(content=f"Deleted {len(ids)} entries in {space!r}.")
 
 
 TOOLS = [
-    list_memory_spaces,
+    list_spaces,
     list_embedding_models,
-    create_memory_space,
-    describe_memory_space,
-    rename_memory_space,
-    delete_memory_space,
-    remember,
-    recall,
-    list_memories,
-    revise,
-    forget,
+    create_space,
+    describe_space,
+    update_space,
+    delete_space,
+    add_entries,
+    search,
+    list_entries,
+    update_entries,
+    delete_entries,
 ]

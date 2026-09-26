@@ -154,14 +154,14 @@ class HybridClient:
         metadatas: Metadatas | None = None,
     ) -> None:
         if len(set(ids)) != len(ids):
-            raise ToolError("Memory IDs repeat within the batch")
+            raise ToolError("Entry IDs repeat within the batch")
 
         def write_chroma() -> GetResult:
             col = self.chroma_client.get_collection(name=collection_name)
             existing = col.get(ids=ids, include=[])["ids"]
             if existing:
                 raise ToolError(
-                    f"Memory IDs already exist in {collection_name!r}: "
+                    f"Entry IDs already exist in {collection_name!r}: "
                     + ", ".join(existing)
                 )
             col.add(ids=ids, documents=documents, metadatas=metadatas)

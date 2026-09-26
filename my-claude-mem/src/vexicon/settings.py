@@ -6,7 +6,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
-    """Read from VEXICON_* environment variables set by the plugin's .mcp.json."""
+    """Read from VEXICON_* environment variables."""
 
     model_config = SettingsConfigDict(env_prefix="VEXICON_", extra="ignore")
 

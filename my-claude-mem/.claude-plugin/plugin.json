@@ -5,5 +5,19 @@
   "author": {
     "name": "estasney",
     "email": "estasney@users.noreply.github.com"
+  },
+  "userConfig": {
+    "lessons_space": {
+      "type": "string",
+      "title": "Lessons space",
+      "description": "Space where the learn skill stores lessons",
+      "required": true,
+      "default": "lessons"
+    },
+    "embedding_repo_id": {
+      "type": "string",
+      "title": "Embedding model",
+      "description": "Hugging Face sentence-transformer repo_id used when a skill creates a space"
+    }
   }
 }
