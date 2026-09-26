@@ -5,6 +5,7 @@ from typing import TYPE_CHECKING
 import chromadb
 from chromadb.api import ClientAPI
 from chromadb.config import Settings as ChromaDbSettings
+from fastmcp.dependencies import Depends
 from fastmcp.server.dependencies import get_context
 from fastmcp.server.lifespan import Lifespan, lifespan
 
@@ -43,3 +44,6 @@ def get_hybrid_client() -> "HybridClient":
 def borrow_hybrid_client() -> Generator["HybridClient"]:
     """The injector enters whatever a dependency returns, so a plain wrapper keeps the client open."""
     yield get_hybrid_client()
+
+
+GetClientDep = Depends(borrow_hybrid_client)

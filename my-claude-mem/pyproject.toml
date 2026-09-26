@@ -119,5 +119,4 @@ ignore = [
 ]
 
 [tool.ruff.lint.per-file-ignores]
-"src/vexicon/tools.py" = ["B008", "ARG001"]
 "**/__init__.py" = ["I"]
