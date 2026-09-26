@@ -16,7 +16,7 @@
               "--no-python-downloads"
             ],
             "timeout": 600,
-            "statusMessage": "Syncing claude-memory environment"
+            "statusMessage": "Syncing vexicon environment"
           }
         ]
       }

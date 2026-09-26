@@ -8,10 +8,10 @@ from chromadb.config import Settings as ChromaDbSettings
 from fastmcp.server.dependencies import get_context
 from fastmcp.server.lifespan import Lifespan, lifespan
 
-from claude_memory.settings import Settings
+from vexicon.settings import Settings
 
 if TYPE_CHECKING:
-    from claude_memory.client.hybrid_client import HybridClient
+    from vexicon.client.hybrid_client import HybridClient
 
 
 def create_chroma_client(settings: Settings) -> ClientAPI:
@@ -21,19 +21,12 @@ def create_chroma_client(settings: Settings) -> ClientAPI:
     )
 
 
-async def ensure_memory_space(client: "HybridClient", name: str) -> None:
-    existing = {col.name for col in await client.list_collections()}
-    if name not in existing:
-        await client.create_collection(name=name)
-
-
-def memory_lifespan(client: "HybridClient", default_memory_space: str) -> Lifespan:
-    """Rebuilds the SQL index at startup, creates the default memory space, publishes the hybrid client to tools, and disposes the SQL engine on shutdown."""
+def memory_lifespan(client: "HybridClient") -> Lifespan:
+    """Rebuilds the SQL index at startup, publishes the hybrid client to tools, and disposes the SQL engine on shutdown."""
 
     @lifespan
     async def run(server: object) -> AsyncGenerator[dict[str, object]]:
         await client.sync()
-        await ensure_memory_space(client, default_memory_space)
         try:
             yield {"hybrid_client": client}
         finally:

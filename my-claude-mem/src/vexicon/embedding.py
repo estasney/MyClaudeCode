@@ -54,9 +54,9 @@ class HFEmbeddingFunction(chromadb.EmbeddingFunction[chromadb.Documents]):
         """Token budget per document; longer inputs are silently truncated."""
         return self._model.max_seq_length
 
-    def __call__(self, texts: chromadb.Documents) -> chromadb.Embeddings:
+    def __call__(self, input: chromadb.Documents) -> chromadb.Embeddings:
         embeddings = self._model.encode(
-            list(texts),
+            list(input),
             batch_size=self.batch_size,
             convert_to_numpy=True,
             normalize_embeddings=self.normalize_embeddings,
@@ -66,7 +66,7 @@ class HFEmbeddingFunction(chromadb.EmbeddingFunction[chromadb.Documents]):
 
     @staticmethod
     def name() -> str:
-        return "claude_memory_hf"
+        return "vexicon_hf"
 
     def get_config(self) -> dict[str, Any]:
         return {

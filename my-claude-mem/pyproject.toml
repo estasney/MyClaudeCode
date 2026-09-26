@@ -1,7 +1,7 @@
 [project]
-name = "claude-memory"
+name = "vexicon"
 version = "0.1.0"
-description = "Hybrid vector + keyword memory for Claude Code, served over MCP stdio."
+description = "Hybrid vector + keyword MCP server powered by chroma and sqlite"
 readme = "README.md"
 authors = [
     { name = "estasney", email = "estasney@users.noreply.github.com" }
@@ -24,7 +24,7 @@ dependencies = [
 add-bounds = "major"
 
 [project.scripts]
-claude-memory = "claude_memory.server:main"
+vexicon = "vexicon.server:main"
 
 [build-system]
 requires = ["uv_build>=0.12.13,<0.13.0"]
@@ -118,5 +118,5 @@ ignore = [
 ]
 
 [tool.ruff.lint.per-file-ignores]
-"src/claude_memory/tools.py" = ["B008", "ARG001"]
+"src/vexicon/tools.py" = ["B008", "ARG001"]
 "**/__init__.py" = ["I"]

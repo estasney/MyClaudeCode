@@ -8,7 +8,7 @@ from sqlalchemy.engine.interfaces import DBAPIConnection
 from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
 from sqlalchemy.pool import ConnectionPoolEntry
 
-from claude_memory.settings import Settings
+from vexicon.settings import Settings
 
 
 def apply_sqlite_pragmas(engine: Engine) -> None:

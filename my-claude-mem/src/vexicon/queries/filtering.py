@@ -5,7 +5,7 @@ from chromadb.api.types import Where, WhereDocument
 from fastmcp.exceptions import ToolError
 from sqlalchemy import ColumnElement, and_, func, not_, or_, select
 
-from claude_memory import orm
+from vexicon import orm
 
 type Scalar = str | int | float | bool
 type ValueTest = Callable[[ColumnElement[object]], ColumnElement[bool]]

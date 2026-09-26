@@ -1,7 +1,7 @@
 {
   "$schema": "https://anthropic.com/claude-code/plugin.schema.json",
   "name": "my-claude-mem",
-  "description": "Session memory for Claude Code: capture, store, and recall context across sessions. Bundles a hybrid vector + keyword Chroma MCP server.",
+  "description": "General knowledge store for Claude Code: store and search notes, facts, and reference material in named spaces. Bundles a hybrid vector + keyword Chroma MCP server.",
   "author": {
     "name": "estasney",
     "email": "estasney@users.noreply.github.com"

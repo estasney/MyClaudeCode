@@ -22,16 +22,16 @@ from fastmcp.exceptions import ToolError
 from sqlalchemy import bindparam, delete, insert, select, update
 from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine
 
-from claude_memory import orm
-from claude_memory.embedding import resolve_embedding_function
-from claude_memory.queries.fusion import (
+from vexicon import orm
+from vexicon.embedding import resolve_embedding_function
+from vexicon.queries.fusion import (
     KeywordHit,
     assemble_query_result,
     fuse,
     group_by_phrase,
 )
-from claude_memory.queries.matching import match_expression
-from claude_memory.queries.selects import collection_id_select, keyword_search_select
+from vexicon.queries.matching import match_expression
+from vexicon.queries.selects import collection_id_select, keyword_search_select
 
 
 def collection_metadata(

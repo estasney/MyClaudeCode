@@ -5,7 +5,7 @@ from typing import cast
 
 from chromadb.api.types import Include, Metadata, QueryResult
 
-from claude_memory.queries.selects import KeywordRow
+from vexicon.queries.selects import KeywordRow
 
 
 @dataclass(frozen=True)

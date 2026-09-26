@@ -6,22 +6,15 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
-    """Read from CLAUDE_MEMORY_* environment variables set by the plugin's .mcp.json."""
+    """Read from VEXICON_* environment variables set by the plugin's .mcp.json."""
 
-    model_config = SettingsConfigDict(env_prefix="CLAUDE_MEMORY_", extra="ignore")
+    model_config = SettingsConfigDict(env_prefix="VEXICON_", extra="ignore")
 
     persistent_path: Path = Field(
         description="Directory where the PersistentClient stores its DB."
     )
     index_db_path: Path = Field(
         description="SQLite database file holding the keyword index."
-    )
-    default_memory_space: str = Field(
-        default="claude-memory",
-        min_length=3,
-        max_length=63,
-        pattern=r"^[a-zA-Z0-9][a-zA-Z0-9._-]*[a-zA-Z0-9]$",
-        description="Memory space created at startup and used when a tool call names none.",
     )
     vector_weight: float = Field(
         default=1.0, ge=0, description="Weight of the vector ranking in fusion."

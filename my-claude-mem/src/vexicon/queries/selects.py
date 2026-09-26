@@ -14,8 +14,8 @@ from sqlalchemy import (
     union_all,
 )
 
-from claude_memory import orm
-from claude_memory.queries.filtering import where_condition, where_document_condition
+from vexicon import orm
+from vexicon.queries.filtering import where_condition, where_document_condition
 
 type KeywordRow = tuple[int, str, str, orm.Json | None, float]
 

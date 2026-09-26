@@ -1,7 +1,7 @@
 from alembic import context
 from sqlalchemy import create_engine, text
 
-from claude_memory.orm import Base
+from vexicon.orm import Base
 
 
 class ForeignKeyViolationError(RuntimeError):

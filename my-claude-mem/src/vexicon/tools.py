@@ -12,11 +12,10 @@ from fastmcp.tools import ToolResult
 from pydantic import BaseModel, Field
 from pydantic.json_schema import SkipJsonSchema
 
-from claude_memory.client.hybrid_client import HybridClient
-from claude_memory.deps import borrow_hybrid_client
-from claude_memory.embedding import list_local_repo_ids
-from claude_memory.settings import get_settings
-from claude_memory.text_tools import lines_tool, record_tool, records_tool, table_tool
+from vexicon.client.hybrid_client import HybridClient
+from vexicon.deps import borrow_hybrid_client
+from vexicon.embedding import list_local_repo_ids
+from vexicon.text_tools import lines_tool, record_tool, records_tool, table_tool
 
 GetClientDep = Depends(borrow_hybrid_client)
 
@@ -29,16 +28,6 @@ MemorySpaceName = Annotated[
         description="Memory space name.",
     ),
 ]
-
-MemorySpaceField = Field(
-    default=None,
-    description="Memory space to use; omit for the default memory space.",
-)
-
-
-def resolve_memory_space(memory_space: str | None) -> str:
-    return memory_space or get_settings().default_memory_space
-
 
 WhereField = Field(default=None, description="Metadata filter.")
 WhereTextField = Field(default=None, description="Memory text filter.")
@@ -61,7 +50,7 @@ class NewMemory(BaseModel):
 
 class ReviseInput(BaseModel):
     ids: list[str] = Field(description="IDs of memories to revise.")
-    memory_space: str | None = MemorySpaceField
+    memory_space: MemorySpaceName
     metadata: list[dict[str, object]] | None = Field(
         default=None, description="New metadata per ID."
     )
@@ -188,16 +177,15 @@ async def create_memory_space(
 
 @record_tool
 async def describe_memory_space(
+    memory_space: MemorySpaceName,
     ctx: Context,
-    memory_space: str | None = MemorySpaceField,
     sample_size: int = 5,
     client: HybridClient = GetClientDep,
 ) -> MemorySpaceInfo:
     """Return name, id, metadata, memory count, and the first few memories of a memory space."""
-    name = resolve_memory_space(memory_space)
-    col = await client.get_collection(name)
-    count = await client.count(name)
-    sample = await client.peek(name, limit=sample_size)
+    col = await client.get_collection(memory_space)
+    count = await client.count(memory_space)
+    sample = await client.peek(memory_space, limit=sample_size)
     return MemorySpaceInfo(
         name=col.name,
         id=str(col.id),
@@ -232,32 +220,31 @@ async def delete_memory_space(
 
 async def remember(
     memories: list[NewMemory],
+    memory_space: MemorySpaceName,
     ctx: Context,
-    memory_space: str | None = MemorySpaceField,
     client: HybridClient = GetClientDep,
 ) -> ToolResult:
     """
-    Store memories. 
-    The memory space's embedding_max_tokens (see list_memory_spaces) is the absolute per-memory cap; longer text is silently truncated before embedding. 
+    Store memories.
+    The memory space's embedding_max_tokens (see list_memory_spaces) is the absolute per-memory cap; longer text is silently truncated before embedding.
     Chunk long text to roughly half that cap for best embedding quality.
     Recommend to include the project_dir in metadata
     """
-    name = resolve_memory_space(memory_space)
     ids = [memory.id for memory in memories]
     documents = [memory.text for memory in memories]
     metadatas = [
         {**(memory.meta or {}), "created_at": memory.created_at} for memory in memories
     ]
-    await client.add(name, ids=ids, documents=documents, metadatas=metadatas)
-    lines = [f"Stored {len(ids)} memories in {name!r}.", *ids]
+    await client.add(memory_space, ids=ids, documents=documents, metadatas=metadatas)
+    lines = [f"Stored {len(ids)} memories in {memory_space!r}.", *ids]
     return ToolResult(content="\n".join(lines))
 
 
 @records_tool
 async def recall(
     queries: list[str],
+    memory_space: MemorySpaceName,
     ctx: Context,
-    memory_space: str | None = MemorySpaceField,
     limit: int = 5,
     where: dict[str, object] | None = WhereField,
     where_text: dict[str, object] | None = WhereTextField,
@@ -265,7 +252,7 @@ async def recall(
 ) -> list[Recall]:
     """Hybrid search over a memory space: vector and keyword rankings fused per query text. Returns one ranked list of at most limit memories per query text."""
     result = await client.query(
-        resolve_memory_space(memory_space),
+        memory_space,
         query_texts=queries,
         n_results=limit,
         where=where,
@@ -277,8 +264,8 @@ async def recall(
 
 @records_tool
 async def list_memories(
+    memory_space: MemorySpaceName,
     ctx: Context,
-    memory_space: str | None = MemorySpaceField,
     ids: list[str] | None = None,
     where: dict[str, object] | None = WhereField,
     where_text: dict[str, object] | None = WhereTextField,
@@ -288,7 +275,7 @@ async def list_memories(
 ) -> list[Memory]:
     """Fetch memories from a memory space, by ID, filter, or page."""
     result = await client.get(
-        resolve_memory_space(memory_space),
+        memory_space,
         ids=ids,
         where=where,
         where_document=where_text,
@@ -305,26 +292,26 @@ async def revise(
     client: HybridClient = GetClientDep,
 ) -> ToolResult:
     """Revise the text or metadata of memories by ID."""
-    name = resolve_memory_space(params.memory_space)
     await client.update(
-        name,
+        params.memory_space,
         ids=params.ids,
         metadatas=params.metadata,
         documents=params.memories,
     )
-    return ToolResult(content=f"Revised {len(params.ids)} memories in {name!r}.")
+    return ToolResult(
+        content=f"Revised {len(params.ids)} memories in {params.memory_space!r}."
+    )
 
 
 async def forget(
     ids: list[str],
+    memory_space: MemorySpaceName,
     ctx: Context,
-    memory_space: str | None = MemorySpaceField,
     client: HybridClient = GetClientDep,
 ) -> ToolResult:
     """Delete memories by ID."""
-    name = resolve_memory_space(memory_space)
-    await client.delete(name, ids=ids)
-    return ToolResult(content=f"Forgot {len(ids)} memories in {name!r}.")
+    await client.delete(memory_space, ids=ids)
+    return ToolResult(content=f"Forgot {len(ids)} memories in {memory_space!r}.")
 
 
 TOOLS = [

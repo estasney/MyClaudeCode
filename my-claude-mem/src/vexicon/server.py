@@ -1,12 +1,12 @@
 from fastmcp import FastMCP
 from fastmcp.tools import Tool
 
-from claude_memory.client.hybrid_client import HybridClient
-from claude_memory.db import create_index_engine, run_migrations
-from claude_memory.deps import create_chroma_client, memory_lifespan
-from claude_memory.resources import MemorySpacesProvider
-from claude_memory.settings import Settings, get_settings
-from claude_memory.tools import TOOLS
+from vexicon.client.hybrid_client import HybridClient
+from vexicon.db import create_index_engine, run_migrations
+from vexicon.deps import create_chroma_client, memory_lifespan
+from vexicon.resources import MemorySpacesProvider
+from vexicon.settings import Settings, get_settings
+from vexicon.tools import TOOLS
 
 
 def build_server(settings: Settings) -> FastMCP:
@@ -22,9 +22,7 @@ def build_server(settings: Settings) -> FastMCP:
         keyword_weight=settings.keyword_weight,
         rrf_rank_offset=settings.rrf_rank_offset,
     )
-    mcp = FastMCP(
-        "memory", lifespan=memory_lifespan(client, settings.default_memory_space)
-    )
+    mcp = FastMCP("memory", lifespan=memory_lifespan(client))
     tags = {"memory"}
     for tool in TOOLS:
         if isinstance(tool, Tool):
@@ -36,5 +34,5 @@ def build_server(settings: Settings) -> FastMCP:
 
 
 def main() -> None:
-    """Entry point for the claude-memory script; stdio is the only transport."""
+    """Entry point for the vexicon script; stdio is the only transport."""
     build_server(get_settings()).run(transport="stdio")
