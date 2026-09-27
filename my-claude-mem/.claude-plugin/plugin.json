@@ -22,7 +22,8 @@
       "env": {
         "ORT_DISABLE_TELEMETRY": "1",
         "VEXICON_PERSISTENT_PATH": "${CLAUDE_PLUGIN_DATA}/chroma",
-        "VEXICON_INDEX_DB_PATH": "${CLAUDE_PLUGIN_DATA}/hybrid.db"
+        "VEXICON_INDEX_DB_PATH": "${CLAUDE_PLUGIN_DATA}/hybrid.db",
+        "VEXICON_DEVICE": "${user_config.device}"
       }
     }
   },
@@ -37,7 +38,19 @@
     "embedding_repo_id": {
       "type": "string",
       "title": "Embedding model",
-      "description": "Hugging Face sentence-transformer repo_id used when a skill creates a space"
+      "description": "Model a skill uses when it creates a space. With a GPU, pick multi-qa-mpnet-base-cos-v1. On CPU only, pick the smaller multi-qa-MiniLM-L6-cos-v1.",
+      "options": [
+        "sentence-transformers/multi-qa-mpnet-base-cos-v1",
+        "sentence-transformers/multi-qa-MiniLM-L6-cos-v1"
+      ],
+      "default": "sentence-transformers/multi-qa-MiniLM-L6-cos-v1"
+    },
+    "device": {
+      "type": "string",
+      "title": "Device",
+      "description": "Device that runs the embedding model. Auto uses a GPU when one is present.",
+      "options": ["auto", "cpu", "cuda"],
+      "default": "auto"
     }
   }
 }

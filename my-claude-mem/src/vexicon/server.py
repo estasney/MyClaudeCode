@@ -21,6 +21,7 @@ def build_server(settings: Settings) -> FastMCP:
         vector_weight=settings.vector_weight,
         keyword_weight=settings.keyword_weight,
         rrf_rank_offset=settings.rrf_rank_offset,
+        device=settings.device,
     )
     mcp = FastMCP(
         "vexicon",

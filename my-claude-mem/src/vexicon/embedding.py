@@ -9,6 +9,8 @@ from chromadb.utils.embedding_functions import (
 from huggingface_hub import CachedRepoInfo, HfApi, ModelInfo, scan_cache_dir
 from sentence_transformers import SentenceTransformer
 
+from vexicon.settings import Device
+
 
 def is_sentence_transformer(repo: CachedRepoInfo) -> bool:
     markers = {"modules.json", "config_sentence_transformers.json"}
@@ -97,11 +99,13 @@ class HFEmbeddingFunction(chromadb.EmbeddingFunction[chromadb.Documents]):
 
 
 def resolve_embedding_function(
-    repo_id: str | None,
+    repo_id: str | None, device: Device
 ) -> tuple[chromadb.EmbeddingFunction[chromadb.Documents], int | None]:
     """Build the embedding function for repo_id (or Chroma's default) with its per-document token budget."""
     if repo_id is None:
         default = DefaultEmbeddingFunction()
         return default, default.max_tokens()
-    hf = HFEmbeddingFunction(repo_id=repo_id)
+    hf = HFEmbeddingFunction(
+        repo_id=repo_id, device=None if device is Device.auto else device
+    )
     return hf, hf.max_tokens()

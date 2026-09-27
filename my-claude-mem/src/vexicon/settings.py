@@ -1,8 +1,15 @@
+from enum import StrEnum
 from functools import lru_cache
 from pathlib import Path
 
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+
+class Device(StrEnum):
+    auto = "auto"
+    cpu = "cpu"
+    cuda = "cuda"
 
 
 class Settings(BaseSettings):
@@ -24,6 +31,9 @@ class Settings(BaseSettings):
     )
     rrf_rank_offset: int = Field(
         default=60, ge=1, description="Rank offset in reciprocal rank fusion."
+    )
+    device: Device = Field(
+        default=Device.auto, description="Device that runs embedding models."
     )
 
 

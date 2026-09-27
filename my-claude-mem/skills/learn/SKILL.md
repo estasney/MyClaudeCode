@@ -12,7 +12,7 @@ The user is asking that you learn from your recent interactions with them. Each 
 
 Show one draft at a time. On approval, store it with the `add_entries` tool, in the `${user_config.lessons_space}` space unless the user specifies another, then show the next draft. The user may edit sections by name or number, or skip a draft.
 
-If the space does not exist, create it with the `create_space` tool and a readme that describes the lesson format. Pass embedding_repo_id `${user_config.embedding_repo_id}` if that names a model, and omit it otherwise.
+If the space does not exist, download the `${user_config.embedding_repo_id}` model with the `download_embedding_model` tool. Then create the space with the `create_space` tool, that model as embedding_repo_id, and a readme that describes the lesson format.
 
 Any text below narrows what to learn or names a different space.
 

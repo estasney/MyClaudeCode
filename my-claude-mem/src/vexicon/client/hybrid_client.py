@@ -32,6 +32,7 @@ from vexicon.queries.fusion import (
 )
 from vexicon.queries.matching import match_expression
 from vexicon.queries.selects import collection_id_select, keyword_search_select
+from vexicon.settings import Device
 
 
 def collection_metadata(
@@ -58,12 +59,14 @@ class HybridClient:
         vector_weight: float,
         keyword_weight: float,
         rrf_rank_offset: int,
+        device: Device,
     ) -> None:
         self.chroma_client = chroma_client
         self.sql_engine = sql_engine
         self.vector_weight = vector_weight
         self.keyword_weight = keyword_weight
         self.rrf_rank_offset = rrf_rank_offset
+        self.device = device
 
     async def list_collections(
         self, limit: int | None = None, offset: int | None = None
@@ -91,7 +94,9 @@ class HybridClient:
         metadata: CollectionMetadata | None = None,
     ) -> Collection:
         def write_chroma() -> Collection:
-            embedding_function, max_tokens = resolve_embedding_function(repo_id)
+            embedding_function, max_tokens = resolve_embedding_function(
+                repo_id, self.device
+            )
             return self.chroma_client.create_collection(
                 name=name,
                 embedding_function=cast(
