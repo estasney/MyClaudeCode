@@ -1,6 +1,6 @@
 [project]
 name = "vexicon"
-version = "0.4.0"
+version = "0.4.1"
 description = "Hybrid vector + keyword MCP server powered by chroma and sqlite"
 readme = "README.md"
 authors = [
