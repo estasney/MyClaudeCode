@@ -1,5 +1,8 @@
+from typing import Annotated
+
 from fastmcp.server.context import Context
 from fastmcp.tools import ToolResult
+from pydantic import Field
 
 from vexicon.client.hybrid_client import HybridClient
 from vexicon.deps import GetClientDep
@@ -27,7 +30,9 @@ async def create_space(
     ctx: Context,
     readme: Readme | None = None,
     embedding_repo_id: EmbeddingRepoId | None = None,
-    metadata: SpaceMetadata | None = None,
+    metadata: Annotated[
+        SpaceMetadata | None, Field(description="Other space metadata.")
+    ] = None,
     client: HybridClient = GetClientDep,
 ) -> ToolResult:
     """Create a space."""
@@ -66,13 +71,13 @@ async def update_space(
     ctx: Context,
     new_name: SpaceName | None = None,
     readme: Readme | None = None,
-    metadata: SpaceMetadata | None = None,
+    metadata: Annotated[
+        SpaceMetadata | None,
+        Field(description="Keys to add or change where a null value removes the key."),
+    ] = None,
     client: HybridClient = GetClientDep,
 ) -> ToolResult:
-    """Rename a space or change its metadata.
-
-    Metadata keys merge into the current metadata; a null value removes the key.
-    """
+    """Rename a space or change its readme and metadata."""
     changes = dict(metadata or {})
     if readme is not None:
         changes["readme"] = readme

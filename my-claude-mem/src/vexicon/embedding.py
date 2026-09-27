@@ -4,9 +4,9 @@ import chromadb
 import numpy as np
 from chromadb.utils.embedding_functions import (
     DefaultEmbeddingFunction,
-    register_embedding_function,
+    register_embedding_function,  # pyright: ignore[reportUnknownVariableType]
 )
-from huggingface_hub import CachedRepoInfo, scan_cache_dir
+from huggingface_hub import CachedRepoInfo, HfApi, ModelInfo, scan_cache_dir
 from sentence_transformers import SentenceTransformer
 
 
@@ -24,6 +24,16 @@ def list_local_repo_ids() -> list[str]:
     """
     repos = scan_cache_dir().repos
     return sorted(repo.repo_id for repo in repos if is_sentence_transformer(repo))
+
+
+def list_hub_models(limit: int) -> list[ModelInfo]:
+    models = HfApi().list_models(
+        author="sentence-transformers",
+        sort="downloads",
+        limit=limit,
+        expand=["downloads"],
+    )
+    return list(models)
 
 
 @register_embedding_function

@@ -9,7 +9,6 @@ from vexicon.models.entries import Entry
 SpaceMetadata = Annotated[
     dict[str, object],
     ForbiddenKeys(frozenset({"readme", "embedding_repo_id", "embedding_max_tokens"})),
-    Field(description="Other space metadata."),
 ]
 
 

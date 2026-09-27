@@ -10,7 +10,7 @@
     {
       "name": "my-claude-mem",
       "source": "./my-claude-mem",
-      "description": "Session memory for Claude Code: capture, store, and recall context across sessions."
+      "description": "General knowledge store for Claude Code: store and search notes, facts, and reference material in named spaces."
     },
     {
       "name": "python-lsp",
