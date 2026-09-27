@@ -4,7 +4,7 @@ description: Prompt Claude to learn
 argument-hint: [additional context]
 disable-model-invocation: true
 ---
-The user is asking that you learn from your recent interactions with them. Each lesson is one entry. Draft one note per lesson, with three fields.
+The user is asking that you learn from your recent interactions with them. Each lesson is one entry. Draft one note per lesson, with three fields. Each entry must make sense to a reader who has not seen this session or the other entries.
 
 **Context**: Sufficient detail that a future reader understands what occurred.
 **Behavior**: The preference or rejection the user showed.
