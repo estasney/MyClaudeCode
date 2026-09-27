@@ -20,7 +20,7 @@ async def list_spaces(
     offset: int | None = None,
     client: HybridClient = GetClientDep,
 ) -> list[SpaceSummary]:
-    """List spaces with their metadata."""
+    """List spaces with their readme and embedding model."""
     cols = await client.list_collections(limit=limit, offset=offset)
     return [SpaceSummary(name=c.name, metadata_raw=c.metadata) for c in cols]
 

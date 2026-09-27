@@ -8,6 +8,7 @@ declared: the result is text content only.
 
 import json
 from collections.abc import Callable, Iterable
+from textwrap import shorten
 from typing import Any, get_args, get_origin
 
 from fastmcp.tools import ToolResult
@@ -50,13 +51,20 @@ def render_cell(value: object) -> str:
             return str(value)
 
 
-def render_table(model: type[BaseModel], rows: Iterable[BaseModel]) -> str:
-    """Columns padded to their widest cell, two spaces apart, like ``docker ps``."""
+def render_table(
+    model: type[BaseModel], rows: Iterable[BaseModel], max_width: int = 60
+) -> str:
+    """Columns padded to their widest cell, two spaces apart, like ``docker ps``; cells wider than max_width are cut."""
     columns = list(model.model_json_schema(mode="serialization")["properties"])
     grid = [columns]
     for row in rows:
         dumped = row.model_dump(mode="json")
-        grid.append([render_cell(dumped[column]) for column in columns])
+        grid.append(
+            [
+                shorten(render_cell(dumped[column]), width=max_width, placeholder=" …")
+                for column in columns
+            ]
+        )
     widths = [max(len(line[index]) for line in grid) for index in range(len(columns))]
     return "\n".join(
         "  ".join(

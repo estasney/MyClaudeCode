@@ -33,6 +33,12 @@ class SpaceSummary(BaseModel):
     def embedding_repo_id(self) -> str | None:
         return (self.metadata_raw or {}).get("embedding_repo_id")
 
+
+class SpaceInfo(SpaceSummary):
+    id: str = Field(description="Space ID.")
+    count: int = Field(description="Number of entries stored.")
+    sample: list[Entry] = Field(description="The first few entries.")
+
     @computed_field(description="Other space metadata.")
     @property
     def metadata(self) -> dict[str, object] | None:
@@ -43,9 +49,3 @@ class SpaceSummary(BaseModel):
             if key not in known
         }
         return rest or None
-
-
-class SpaceInfo(SpaceSummary):
-    id: str = Field(description="Space ID.")
-    count: int = Field(description="Number of entries stored.")
-    sample: list[Entry] = Field(description="The first few entries.")
