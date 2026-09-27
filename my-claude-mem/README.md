@@ -1,4 +1,4 @@
-# my-claude-mem
+# vexicon
 
 General knowledge store for Claude Code. Bundles the `vexicon` MCP server: Chroma
 collections with a SQLite FTS5 keyword index, fused by reciprocal rank fusion.

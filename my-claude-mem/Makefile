@@ -12,4 +12,4 @@ version-patch version-minor version-major: check-clean
 	jq --arg version "$$NEW_VERSION" '.version = $$version' $(PLUGIN_JSON) > $(PLUGIN_JSON).tmp && \
 	mv $(PLUGIN_JSON).tmp $(PLUGIN_JSON) && \
 	git add pyproject.toml uv.lock $(PLUGIN_JSON) && \
-	git commit -q -m "my-claude-mem v$$NEW_VERSION"
+	git commit -q -m "vexicon v$$NEW_VERSION"

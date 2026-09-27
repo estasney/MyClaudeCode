@@ -8,7 +8,7 @@
       "description": "Personal Claude Code setup: curated skills, commands, hooks, and output styles."
     },
     {
-      "name": "my-claude-mem",
+      "name": "vexicon",
       "source": "./my-claude-mem",
       "description": "General knowledge store for Claude Code: store and search notes, facts, and reference material in named spaces."
     },
