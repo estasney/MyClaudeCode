@@ -7,3 +7,4 @@
 !**/.mcp.json
 !**/.python-version
 **/__pycache__
+**/*.ses
