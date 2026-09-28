@@ -1,7 +1,7 @@
 {
   "$schema": "https://anthropic.com/claude-code/plugin.schema.json",
   "name": "vexicon",
-  "version": "0.4.1",
+  "version": "0.5.0",
   "description": "General knowledge store for Claude Code: store and search notes, facts, and reference material in named spaces. Bundles a hybrid vector + keyword Chroma MCP server.",
   "author": {
     "name": "estasney",
