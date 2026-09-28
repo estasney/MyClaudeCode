@@ -4,11 +4,11 @@ description: Prompt Claude to learn
 argument-hint: [additional context]
 disable-model-invocation: true
 ---
-The user is asking that you learn from your recent interactions with them. Each lesson is one entry. Draft one note per lesson, with three fields. Each entry must make sense to a reader who has not seen this session or the other entries.
+The user is asking that you learn from the corrections they made in this session. A lesson is a point where your default and the user's norm differed. Draft one entry per lesson, with three fields. A new session reads each entry with no other context.
 
-**Context**: Sufficient detail that a future reader understands what occurred.
-**Behavior**: The preference or rejection the user showed.
-**Conclusion**: What Claude should do in the future.
+**Norm**: What the user expects, in words that hold beyond this incident.
+**Default**: What you did before the user corrected it.
+**Context**: The situation, in the words a later search would use.
 
 Show one draft at a time. On approval, store it with the `add_entries` tool, in the `${user_config.lessons_space}` space unless the user specifies another, then show the next draft. The user may edit sections by name or number, or skip a draft.
 
