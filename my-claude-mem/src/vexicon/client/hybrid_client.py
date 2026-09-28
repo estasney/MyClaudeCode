@@ -24,6 +24,7 @@ from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine
 
 from vexicon import orm
 from vexicon.embedding import resolve_embedding_function
+from vexicon.idle_proxy import IdleUnloadingProxy
 from vexicon.queries.fusion import (
     KeywordHit,
     assemble_query_result,
@@ -50,18 +51,18 @@ def collection_metadata(
 
 
 class HybridClient:
-    """Implements ChromaClientProtocol over one Chroma client and one SQLite engine."""
+    """Implements ChromaClientProtocol over a leased Chroma client and one SQLite engine."""
 
     def __init__(
         self,
-        chroma_client: ClientAPI,
+        chroma: IdleUnloadingProxy[ClientAPI],
         sql_engine: AsyncEngine,
         vector_weight: float,
         keyword_weight: float,
         rrf_rank_offset: int,
         device: Device,
     ) -> None:
-        self.chroma_client = chroma_client
+        self.chroma = chroma
         self.sql_engine = sql_engine
         self.vector_weight = vector_weight
         self.keyword_weight = keyword_weight
@@ -80,7 +81,8 @@ class HybridClient:
         return matched[start:end]
 
     async def _list_collections_chroma(self) -> Sequence[Collection]:
-        return await asyncio.to_thread(self.chroma_client.list_collections)
+        async with self.chroma.lease() as client:
+            return await asyncio.to_thread(client.list_collections)
 
     async def _list_collections_sqlite(self) -> Sequence[str]:
         async with self.sql_engine.begin() as connection:
@@ -93,11 +95,11 @@ class HybridClient:
         repo_id: str | None = None,
         metadata: CollectionMetadata | None = None,
     ) -> Collection:
-        def write_chroma() -> Collection:
+        def write_chroma(client: ClientAPI) -> Collection:
             embedding_function, max_tokens = resolve_embedding_function(
                 repo_id, self.device
             )
-            return self.chroma_client.create_collection(
+            return client.create_collection(
                 name=name,
                 embedding_function=cast(
                     "EmbeddingFunction[Embeddable]", embedding_function
@@ -108,24 +110,27 @@ class HybridClient:
         async def write_sql(connection: AsyncConnection, col: Collection) -> None:
             await connection.execute(insert(orm.Collection).values(name=col.name))
 
-        collection = await asyncio.to_thread(write_chroma)
+        async with self.chroma.lease() as client:
+            collection = await asyncio.to_thread(write_chroma, client)
         async with self.sql_engine.begin() as connection:
             await write_sql(connection, collection)
         return collection
 
     async def get_collection(self, name: str) -> Collection:
-        return await asyncio.to_thread(self.chroma_client.get_collection, name=name)
+        async with self.chroma.lease() as client:
+            return await asyncio.to_thread(client.get_collection, name=name)
 
     async def delete_collection(self, name: str) -> None:
-        def write_chroma() -> None:
-            self.chroma_client.delete_collection(name=name)
+        def write_chroma(client: ClientAPI) -> None:
+            client.delete_collection(name=name)
 
         async def write_sql(connection: AsyncConnection) -> None:
             await connection.execute(
                 delete(orm.Collection).where(orm.Collection.name == name)
             )
 
-        await asyncio.to_thread(write_chroma)
+        async with self.chroma.lease() as client:
+            await asyncio.to_thread(write_chroma, client)
         async with self.sql_engine.begin() as connection:
             await write_sql(connection)
 
@@ -135,8 +140,8 @@ class HybridClient:
         name: str | None = None,
         metadata: CollectionMetadata | None = None,
     ) -> None:
-        def write_chroma() -> None:
-            col = self.chroma_client.get_collection(name=collection_name)
+        def write_chroma(client: ClientAPI) -> None:
+            col = client.get_collection(name=collection_name)
             col.modify(name=name, metadata=metadata)
 
         async def write_sql(connection: AsyncConnection) -> None:
@@ -147,7 +152,8 @@ class HybridClient:
                     .values(name=name)
                 )
 
-        await asyncio.to_thread(write_chroma)
+        async with self.chroma.lease() as client:
+            await asyncio.to_thread(write_chroma, client)
         async with self.sql_engine.begin() as connection:
             await write_sql(connection)
 
@@ -161,8 +167,8 @@ class HybridClient:
         if len(set(ids)) != len(ids):
             raise ToolError("Entry IDs repeat within the batch")
 
-        def write_chroma() -> GetResult:
-            col = self.chroma_client.get_collection(name=collection_name)
+        def write_chroma(client: ClientAPI) -> GetResult:
+            col = client.get_collection(name=collection_name)
             existing = col.get(ids=ids, include=[])["ids"]
             if existing:
                 raise ToolError(
@@ -202,7 +208,8 @@ class HybridClient:
 
         async with self.sql_engine.connect() as connection:
             collection_id = await read_collection_id(connection)
-        written = await asyncio.to_thread(write_chroma)
+        async with self.chroma.lease() as client:
+            written = await asyncio.to_thread(write_chroma, client)
         async with self.sql_engine.begin() as connection:
             await write_sql(connection, collection_id, written)
 
@@ -214,8 +221,8 @@ class HybridClient:
         metadatas: Metadatas | None = None,
         documents: Documents | None = None,
     ) -> None:
-        def write_chroma() -> GetResult:
-            col = self.chroma_client.get_collection(name=collection_name)
+        def write_chroma(client: ClientAPI) -> GetResult:
+            col = client.get_collection(name=collection_name)
             col.update(
                 ids=ids, embeddings=embeddings, metadatas=metadatas, documents=documents
             )
@@ -250,13 +257,14 @@ class HybridClient:
             ]
             await connection.execute(statement, rows)
 
-        current = await asyncio.to_thread(write_chroma)
+        async with self.chroma.lease() as client:
+            current = await asyncio.to_thread(write_chroma, client)
         async with self.sql_engine.begin() as connection:
             await write_sql(connection, current)
 
     async def delete(self, collection_name: str, ids: IDs) -> None:
-        def write_chroma() -> None:
-            col = self.chroma_client.get_collection(name=collection_name)
+        def write_chroma(client: ClientAPI) -> None:
+            col = client.get_collection(name=collection_name)
             col.delete(ids=ids)
 
         async def write_sql(connection: AsyncConnection) -> None:
@@ -272,15 +280,16 @@ class HybridClient:
                 )
             )
 
-        await asyncio.to_thread(write_chroma)
+        async with self.chroma.lease() as client:
+            await asyncio.to_thread(write_chroma, client)
         async with self.sql_engine.begin() as connection:
             await write_sql(connection)
 
     async def sync(self) -> None:
-        def read_chroma() -> list[tuple[str, GetResult]]:
+        def read_chroma(client: ClientAPI) -> list[tuple[str, GetResult]]:
             return [
                 (col.name, col.get(include=["documents", "metadatas"]))
-                for col in self.chroma_client.list_collections()
+                for col in client.list_collections()
             ]
 
         async def write_sql(
@@ -312,7 +321,8 @@ class HybridClient:
                 if document_rows:
                     await connection.execute(insert(orm.Document), document_rows)
 
-        snapshot = await asyncio.to_thread(read_chroma)
+        async with self.chroma.lease() as client:
+            snapshot = await asyncio.to_thread(read_chroma, client)
         async with self.sql_engine.begin() as connection:
             await write_sql(connection, snapshot)
 
@@ -327,14 +337,18 @@ class HybridClient:
     ) -> QueryResult:
         included: Include = include or ["metadatas", "documents", "distances"]
 
-        def query_chroma() -> QueryResult:
-            return self.chroma_client.get_collection(name=collection_name).query(
+        def query_chroma(client: ClientAPI) -> QueryResult:
+            return client.get_collection(name=collection_name).query(
                 query_texts=query_texts,
                 n_results=n_results,
                 where=where,
                 where_document=where_document,
                 include=included,
             )
+
+        async def query_vector() -> QueryResult:
+            async with self.chroma.lease() as client:
+                return await asyncio.to_thread(query_chroma, client)
 
         async def query_sql() -> list[list[KeywordHit]]:
             expressions = [
@@ -357,9 +371,7 @@ class HybridClient:
                 )
                 return group_by_phrase(result.tuples().all(), len(query_texts))
 
-        vector, keyword = await asyncio.gather(
-            asyncio.to_thread(query_chroma), query_sql()
-        )
+        vector, keyword = await asyncio.gather(query_vector(), query_sql())
         fused = [
             fuse(
                 vector_ids,
@@ -373,18 +385,18 @@ class HybridClient:
         return assemble_query_result(vector, keyword, fused, included)
 
     async def peek(self, collection_name: str, limit: int = 10) -> GetResult:
-        def fn() -> GetResult:
-            return self.chroma_client.get_collection(name=collection_name).peek(
-                limit=limit
-            )
+        def fn(client: ClientAPI) -> GetResult:
+            return client.get_collection(name=collection_name).peek(limit=limit)
 
-        return await asyncio.to_thread(fn)
+        async with self.chroma.lease() as client:
+            return await asyncio.to_thread(fn, client)
 
     async def count(self, collection_name: str) -> int:
-        def fn() -> int:
-            return self.chroma_client.get_collection(name=collection_name).count()
+        def fn(client: ClientAPI) -> int:
+            return client.get_collection(name=collection_name).count()
 
-        return await asyncio.to_thread(fn)
+        async with self.chroma.lease() as client:
+            return await asyncio.to_thread(fn, client)
 
     async def get(
         self,
@@ -396,8 +408,8 @@ class HybridClient:
         where_document: WhereDocument | None = None,
         include: Include | None = None,
     ) -> GetResult:
-        def fn() -> GetResult:
-            return self.chroma_client.get_collection(name=collection_name).get(
+        def fn(client: ClientAPI) -> GetResult:
+            return client.get_collection(name=collection_name).get(
                 ids=ids,
                 where=where,
                 limit=limit,
@@ -406,4 +418,5 @@ class HybridClient:
                 include=include or ["metadatas", "documents"],
             )
 
-        return await asyncio.to_thread(fn)
+        async with self.chroma.lease() as client:
+            return await asyncio.to_thread(fn, client)

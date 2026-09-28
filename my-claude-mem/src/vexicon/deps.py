@@ -9,6 +9,8 @@ from fastmcp.dependencies import Depends
 from fastmcp.server.dependencies import get_context
 from fastmcp.server.lifespan import Lifespan, lifespan
 
+from vexicon.embedding import release_embedding_models
+from vexicon.idle_proxy import IdleUnloadingProxy
 from vexicon.settings import Settings
 
 if TYPE_CHECKING:
@@ -22,8 +24,22 @@ def create_chroma_client(settings: Settings) -> ClientAPI:
     )
 
 
+def close_chroma_client(client: ClientAPI) -> None:
+    client.close()  # pyright: ignore[reportAttributeAccessIssue] # Technically not on ClientAPI
+
+
+def create_chroma_proxy(settings: Settings) -> IdleUnloadingProxy[ClientAPI]:
+    """Opens Chroma on first use and closes it, with its embedding models, after idle_seconds."""
+    return IdleUnloadingProxy(
+        load=lambda: create_chroma_client(settings),
+        idle_seconds=settings.idle_seconds,
+        unload=close_chroma_client,
+        reclaim=release_embedding_models,
+    )
+
+
 def hybrid_client_lifespan(client: "HybridClient") -> Lifespan:
-    """Rebuilds the SQL index at startup, publishes the hybrid client to tools, and disposes the SQL engine on shutdown."""
+    """Rebuilds the SQL index at startup, publishes the hybrid client to tools, and releases Chroma and the SQL engine on shutdown."""
 
     @lifespan
     async def run(server: object) -> AsyncGenerator[dict[str, object]]:
@@ -31,6 +47,7 @@ def hybrid_client_lifespan(client: "HybridClient") -> Lifespan:
         try:
             yield {"hybrid_client": client}
         finally:
+            await client.chroma.aclose()
             await client.sql_engine.dispose()
 
     return run

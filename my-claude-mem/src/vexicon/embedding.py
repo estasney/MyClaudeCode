@@ -1,7 +1,9 @@
+import gc
 from typing import Any, ClassVar
 
 import chromadb
 import numpy as np
+import torch
 from chromadb.utils.embedding_functions import (
     DefaultEmbeddingFunction,
     register_embedding_function,  # pyright: ignore[reportUnknownVariableType]
@@ -96,6 +98,14 @@ class HFEmbeddingFunction(chromadb.EmbeddingFunction[chromadb.Documents]):
             batch_size=config["batch_size"],
             normalize_embeddings=config["normalize_embeddings"],
         )
+
+
+def release_embedding_models() -> None:
+    """Drop cached SentenceTransformer instances and return their memory to the allocator."""
+    HFEmbeddingFunction.models.clear()
+    gc.collect()
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
 
 
 def resolve_embedding_function(

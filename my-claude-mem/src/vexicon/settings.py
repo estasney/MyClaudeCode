@@ -35,6 +35,12 @@ class Settings(BaseSettings):
     device: Device = Field(
         default=Device.auto, description="Device that runs embedding models."
     )
+    idle_seconds: float = Field(
+        default=300.0,
+        gt=0,
+        description="Seconds without Chroma activity before the client and "
+        "embedding models are unloaded.",
+    )
 
 
 @lru_cache(maxsize=1)

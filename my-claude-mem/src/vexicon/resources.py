@@ -6,6 +6,8 @@ from chromadb.api import ClientAPI
 from fastmcp.resources import FunctionResource, Resource
 from fastmcp.server.providers import Provider
 
+from vexicon.idle_proxy import IdleUnloadingProxy
+
 
 def space_uri(name: str) -> str:
     return f"vexicon://space/{name}"
@@ -35,17 +37,19 @@ class SpacesProvider(Provider):
     Reading a space resource returns its name, id, metadata, and count.
     """
 
-    def __init__(self, client: ClientAPI) -> None:
+    def __init__(self, chroma: IdleUnloadingProxy[ClientAPI]) -> None:
         super().__init__()
-        self.client = client
+        self.chroma = chroma
 
     async def _list_resources(self) -> Sequence[Resource]:
-        names = await asyncio.to_thread(list_space_names, self.client)
+        async with self.chroma.lease() as client:
+            names = await asyncio.to_thread(list_space_names, client)
         return [self.make_resource(name) for name in names]
 
     def make_resource(self, name: str) -> Resource:
         async def read() -> str:
-            return await asyncio.to_thread(read_space_info, self.client, name)
+            async with self.chroma.lease() as client:
+                return await asyncio.to_thread(read_space_info, client, name)
 
         return FunctionResource.from_function(
             read,
