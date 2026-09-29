@@ -7,6 +7,7 @@ from sqlalchemy.ext.asyncio import async_sessionmaker
 from analyze_repo import pipeline, queries, summarize
 from analyze_repo.db import create_index_engine, run_migrations
 from analyze_repo.indexer import PythonIndexer
+from analyze_repo.interpreter import PythonToolchainDiscovery, platform_venv_layout
 from analyze_repo.orm import Language
 from analyze_repo.pipeline import IndexerRegistration
 from analyze_repo.queries import ReferenceInfo, SnapshotInfo, SymbolInfo, SymbolScope
@@ -22,7 +23,11 @@ __all__ = [
 def indexer_registry() -> Mapping[str, IndexerRegistration]:
     """Every suffix the server can index, each naming exactly one indexer."""
     return {
-        ".py": IndexerRegistration(language=Language.python, build=PythonIndexer),
+        ".py": IndexerRegistration(
+            language=Language.python,
+            discovery=PythonToolchainDiscovery(platform_venv_layout()),
+            build_indexer=PythonIndexer,
+        ),
     }
 
 
@@ -33,21 +38,18 @@ def build_server(settings: Settings) -> FastMCP:
 
     @server.tool
     async def index_repository(
-        repo_root: str, toolchains: dict[Language, str]
+        repo_root: str, toolchain_overrides: dict[Language, Path] | None = None
     ) -> SnapshotInfo:
         """Index a repository's working tree, keyed by a digest of its file contents.
 
-        `toolchains` maps each language to index onto the path of its toolchain;
-        for python that is the interpreter of the repository's own environment,
-        so imports resolve against its installed packages.
+        Each language's toolchain is discovered under the repo root. For python
+        that is the one virtual environment directory there. `toolchain_overrides`
+        maps a language onto an explicit toolchain path instead.
         """
-        indexers = pipeline.build_indexers(
-            registry, {language: Path(path) for language, path in toolchains.items()}
-        )
+        root = Path(repo_root)
+        indexers = pipeline.build_indexers(registry, root, toolchain_overrides)
         async with new_session.begin() as session:
-            snapshot = await pipeline.index_working_tree(
-                session, Path(repo_root), indexers
-            )
+            snapshot = await pipeline.index_working_tree(session, root, indexers)
             return await queries.snapshot_info(session, snapshot)
 
     @server.tool

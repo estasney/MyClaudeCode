@@ -1,4 +1,5 @@
 import sys
+import venv
 from collections.abc import AsyncIterator
 from pathlib import Path
 from textwrap import dedent
@@ -113,7 +114,10 @@ async def test_list_callers_over_mcp(
     Assert: only bodies that call the symbol are listed as callers."""
     indexed = await client.call_tool(
         "index_repository",
-        {"repo_root": str(working_tree), "toolchains": {"python": sys.executable}},
+        {
+            "repo_root": str(working_tree),
+            "toolchain_overrides": {"python": sys.executable},
+        },
     )
     found = await client.call_tool(
         "search_symbols",
@@ -153,10 +157,47 @@ async def test_index_repository_reuses_the_snapshot_of_an_unchanged_tree(
     Assert: the second call answers with the first snapshot, not a new one."""
     arguments = {
         "repo_root": str(working_tree),
-        "toolchains": {"python": sys.executable},
+        "toolchain_overrides": {"python": sys.executable},
     }
     first = await client.call_tool("index_repository", arguments)
     second = await client.call_tool("index_repository", arguments)
     assert second.data == first.data, (
         f"re-indexing an unchanged tree should return {first.data}, got {second.data}"
     )
+
+
+@pytest.mark.parametrize(
+    "working_tree",
+    [
+        {
+            ".gitignore": "env/\n",
+            "lib.py": dedent("""\
+                def helper() -> int:
+                    return 1
+                """),
+        },
+    ],
+    indirect=True,
+    ids=["one module beside a venv"],
+)
+@pytest.mark.asyncio
+async def test_index_repository_discovers_the_venv_under_the_root(
+    client: Client[FastMCPTransport], working_tree: Path
+) -> None:
+    """Arrange: a working tree holding a real venv under a name of its own.
+    Act: index it through the server without a toolchain override.
+    Assert: the module's symbol is indexed through the discovered interpreter."""
+    venv.EnvBuilder(with_pip=False, symlinks=True).create(working_tree / "env")
+    indexed = await client.call_tool(
+        "index_repository", {"repo_root": str(working_tree)}
+    )
+    found = await client.call_tool(
+        "search_symbols",
+        {
+            "snapshot_id": indexed.data.snapshot_id,
+            "name_fragment": "helper",
+            "scope": SymbolScope.module_and_class,
+        },
+    )
+    names = [row.qualified_name for row in found.data]
+    assert names == ["helper"], f"discovered indexing should find helper, got {names}"

@@ -35,27 +35,36 @@ class LanguageIndexer(Protocol):
     def index(self, root: Path, files: Sequence[Path]) -> RepoIndex: ...
 
 
+class ToolchainDiscovery(Protocol):
+    def get_toolchain(self, root: Path) -> Path | None: ...
+
+
 @dataclass(frozen=True)
 class IndexerRegistration:
-    """Builds one language's indexer from the path of that language's toolchain."""
-
     language: orm.Language
-    build: Callable[[Path], LanguageIndexer]
+    discovery: ToolchainDiscovery
+    build_indexer: Callable[[Path], LanguageIndexer]
 
 
 def build_indexers(
     registry: Mapping[str, IndexerRegistration],
-    toolchains: Mapping[orm.Language, Path],
+    root: Path,
+    toolchain_overrides: Mapping[orm.Language, Path] | None,
 ) -> dict[str, LanguageIndexer]:
-    """One indexer per language that has a toolchain, shared by every suffix it registers."""
+    """One indexer per registered language shared by every suffix it registers."""
     by_language: dict[orm.Language, LanguageIndexer] = {}
     indexers: dict[str, LanguageIndexer] = {}
     for suffix, registration in registry.items():
-        toolchain = toolchains.get(registration.language)
-        if toolchain is None:
-            continue
         if registration.language not in by_language:
-            by_language[registration.language] = registration.build(toolchain)
+            toolchain = (
+                toolchain_overrides[registration.language]
+                if toolchain_overrides is not None
+                and registration.language in toolchain_overrides
+                else registration.discovery.get_toolchain(root)
+            )
+            if toolchain is None:
+                continue
+            by_language[registration.language] = registration.build_indexer(toolchain)
         indexers[suffix] = by_language[registration.language]
     return indexers
 
