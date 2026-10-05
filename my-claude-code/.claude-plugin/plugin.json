@@ -1,6 +1,7 @@
 {
   "$schema": "https://anthropic.com/claude-code/plugin.schema.json",
   "name": "my-claude-code",
+  "version": "0.1.0",
   "description": "Personal Claude Code plugin",
   "author": {
     "name": "estasney",
