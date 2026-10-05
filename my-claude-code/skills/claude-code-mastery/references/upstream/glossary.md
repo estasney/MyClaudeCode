@@ -42,7 +42,7 @@ Learn more: [How Claude Code works](/docs/en/how-claude-code-works#the-agentic-l
 
 ### Artifact
 
-A live, interactive web page Claude Code publishes from your session to a private URL on claude.ai, so you can see output visually or share it instead of reading terminal text. The page updates in place when the session republishes. Artifacts you create from Claude Code appear in the same gallery as artifacts created in claude.ai conversations. Sharing depends on your plan: on Pro and Max, a public link that anyone can open; on Team and Enterprise, sharing within your organization, plus public links once an Owner enables them.
+A live, interactive web page Claude Code publishes from your session to a private URL on claude.ai, so you can see output visually or share it instead of reading terminal text. The page updates in place when the session republishes. Artifacts you create from Claude Code appear in the same gallery as artifacts created in claude.ai conversations. Sharing options depend on your plan: see [Share an artifact](/docs/en/artifacts#share-an-artifact).
 
 Learn more: [Share session output as artifacts](/docs/en/artifacts)
 
@@ -268,7 +268,7 @@ Learn more: [Remote Control](/docs/en/remote-control)
 
 ### Rules
 
-Modular instruction files in `.claude/rules/` that load alongside CLAUDE.md. A rule can be path-scoped with YAML `paths:` frontmatter so it only loads when Claude reads a matching file, keeping context lean until it's relevant.
+Modular instruction files in `.claude/rules/` that load alongside CLAUDE.md. A rule can be path-scoped with YAML `paths:` frontmatter so it only loads when Claude reads, writes, or edits a matching file, keeping context lean until it's relevant.
 
 Learn more: [Organize rules with `.claude/rules/`](/docs/en/memory#organize-rules-with-claude/rules/)
 
@@ -314,6 +314,29 @@ Any place you access Claude Code: the CLI, VS Code, JetBrains, Desktop, or claud
 
 Learn more: [Platforms and integrations](/docs/en/platforms)
 
+### System prompt
+
+The instructions Claude Code sends ahead of your conversation on every request, covering how Claude uses tools, behaves safely, and formats its responses. You can add to the system prompt with `--append-system-prompt` or replace it with `--system-prompt`. The system prompt is the first layer of the [prompt cache](/docs/en/prompt-caching#how-the-cache-is-organized).
+
+Your [CLAUDE.md](#claude-md) files and the instructions of your [output style](#output-style) aren't part of the system prompt. Claude Code delivers them in the conversation as [system reminders](#system-reminder).
+
+Learn more: [System prompt flags](/docs/en/cli-reference#system-prompt-flags)
+
+### System reminder
+
+A message that Claude Code, as the [harness](#agentic-harness), adds to the conversation to give Claude context. You don't send system reminders yourself. Claude Code inserts them as a session runs, for example when the session starts, when a hook returns text, or when a file changes on disk. Claude reads them alongside your messages. The following all reach Claude as system reminders:
+
+* Your [CLAUDE.md](#claude-md) files
+* The instructions of your [output style](#output-style)
+* Text a [hook](#hook) returns as `additionalContext`
+* The list of available [skills](#skill)
+* A note that a file Claude read earlier has changed on disk
+* The commit and pull request attribution lines
+
+In a logged API request, a system reminder appears wrapped in `<system-reminder>` tags inside a user message, or on some models as a separate message with the `system` role.
+
+Learn more: [Context Claude Code adds outside the system prompt](/docs/en/agent-sdk/modifying-system-prompts#context-claude-code-adds-outside-the-system-prompt)
+
 ## T
 
 ### Teleport
@@ -327,6 +350,12 @@ Learn more: [From cloud to terminal](/docs/en/claude-code-on-the-web#from-cloud-
 An action Claude can take: read a file, edit code, run a shell command, search the web, spawn a subagent. Tools are what make Claude Code agentic. Without them, Claude can only respond with text. Each tool use returns a result that informs Claude's next decision in the [agentic loop](#agentic-loop).
 
 Learn more: [Tools available to Claude](/docs/en/tools-reference)
+
+### Transcript
+
+The stored record of a [session](#session). The conversation is what you and Claude exchange; the transcript is that conversation kept as a file, by default at `~/.claude/projects/<project>/<session-id>.jsonl`. Claude Code reads the file back when you resume, which is how a conversation continues after the session ends. For the on-screen view of the same conversation, see the [transcript viewer](/docs/en/interactive-mode#transcript-viewer).
+
+Learn more: [Where transcripts are stored](/docs/en/sessions#where-transcripts-are-stored)
 
 ### Turn
 
@@ -356,9 +385,9 @@ Learn more: [Run parallel sessions with git worktrees](/docs/en/worktrees)
 
 These terms appear in older docs, blog posts, and community content. Use the current name when searching this site.
 
-| Old term                                                                | Now called                                    | Notes                                                                         |
-| ----------------------------------------------------------------------- | --------------------------------------------- | ----------------------------------------------------------------------------- |
-| Headless mode                                                           | [Non-interactive mode](#non-interactive-mode) | Same `-p` flag, same behavior                                                 |
-| Web session; "Claude Code on the web" as the name for any cloud session | [Cloud session](#cloud-session)               | "Claude Code on the web" now names only the browser surface at claude.ai/code |
-| Custom commands                                                         | [Skills](#skill)                              | `.claude/commands/` files still work                                          |
-| Slash commands                                                          | Commands                                      | "Slash" dropped from product copy                                             |
+| Old term | Now called | Notes |
+| - | - | - |
+| Headless mode | [Non-interactive mode](#non-interactive-mode) | Same `-p` flag, same behavior |
+| Web session; "Claude Code on the web" as the name for any cloud session | [Cloud session](#cloud-session) | "Claude Code on the web" now names only the browser surface at claude.ai/code |
+| Custom commands | [Skills](#skill) | `.claude/commands/` files still work |
+| Slash commands | Commands | "Slash" dropped from product copy |
