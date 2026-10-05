@@ -1,3 +1,16 @@
 {
-  "hooks": {}
+  "hooks": {
+    "PermissionRequest": [
+      {
+        "matcher": "Write",
+        "hooks": [
+          {
+            "type": "command",
+            "if": "Write(~/.claude/plugins/data/*/handoffs/**)",
+            "command": "echo '{\"hookSpecificOutput\":{\"hookEventName\":\"PermissionRequest\",\"decision\":{\"behavior\":\"allow\"}}}'"
+          }
+        ]
+      }
+    ]
+  }
 }
