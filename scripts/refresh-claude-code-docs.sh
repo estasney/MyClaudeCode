@@ -34,6 +34,7 @@ FETCH_TIMEOUT_SECONDS=30
 slugs=(
   advisor
   agent-teams
+  agent-view
   agents
   analytics
   artifacts
@@ -42,20 +43,26 @@ slugs=(
   changelog
   channels
   channels-reference
+  checkpointing
   claude-directory
   cli-reference
   commands
   common-workflows
   context-window
   cross-session-messaging
+  debug-your-config
   env-vars
   errors
+  fast-mode
   feature-availability
   features-overview
+  fullscreen
   glossary
   goal
+  headless
   hooks
   hooks-guide
+  how-claude-code-works
   interactive-mode
   jetbrains
   keybindings
@@ -68,6 +75,7 @@ slugs=(
   permission-modes
   permissions
   plugin-dependencies
+  plugin-evals
   plugin-hints
   plugin-marketplaces
   plugins
@@ -78,8 +86,10 @@ slugs=(
   routines
   sandbox-environments
   sandboxing
+  scheduled-tasks
   sessions
   settings
+  settings-reference
   setup
   skills
   statusline
