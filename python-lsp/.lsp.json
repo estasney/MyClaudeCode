@@ -13,10 +13,6 @@
     },
     "startupTimeout": 60000,
     "settings": {
-      "python": {
-        "venvPath": "${CLAUDE_PROJECT_DIR}",
-        "venv": ".venv"
-      },
       "basedpyright": {
         "analysis": {
           "diagnosticSeverityOverrides": {
