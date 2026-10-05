@@ -1,5 +1,5 @@
 version = 1
-revision = 3
+revision = 5
 requires-python = ">=3.12"
 resolution-markers = [
     "python_full_version >= '3.14'",
@@ -3734,8 +3734,8 @@ wheels = [
 
 [[package]]
 name = "vexicon"
-version = "0.5.0"
-source = { editable = "." }
+version = "0.6.0"
+source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "aiosqlite" },
     { name = "alembic" },
@@ -3748,20 +3748,21 @@ dependencies = [
     { name = "sentence-transformers" },
     { name = "sqlalchemy" },
 ]
+sdist = { url = "https://files.pythonhosted.org/packages/49/4b/e697e266b746f591648a9cb89af5681cc76b0196b19f9fccbd90c48bfe13/vexicon-0.6.0.tar.gz", hash = "sha256:fe6c39650420812dadffe961ac4885913b44b0733b80367371fc5b8e0675fb57", size = 22333, upload-time = "2026-10-05T03:13:13.583Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/dc/5f/7c54424b2d5c8edba62c20ad0de2e122732cd5139f8fdf80189441e3621c/vexicon-0.6.0-py3-none-any.whl", hash = "sha256:7375d6585a6d7cd9b0807b360d631ccb6ba69852ce634c2f591ba7b336633eec", size = 32162, upload-time = "2026-10-05T03:13:12.709Z" },
+]
+
+[[package]]
+name = "vexicon-plugin"
+version = "0.5.0"
+source = { virtual = "." }
+dependencies = [
+    { name = "vexicon" },
+]
 
 [package.metadata]
-requires-dist = [
-    { name = "aiosqlite", specifier = ">=0.22.1,<0.23.0" },
-    { name = "alembic", specifier = ">=1.19.1,<2.0.0" },
-    { name = "chromadb", specifier = ">=1.5.9,<2.0.0" },
-    { name = "fastmcp", specifier = ">=4.0.10,<5.0.0" },
-    { name = "huggingface-hub", specifier = ">=1.28.0,<2.0.0" },
-    { name = "numpy", specifier = ">=2.5.2,<3.0.0" },
-    { name = "pydantic", specifier = ">=2.13.4,<3.0.0" },
-    { name = "pydantic-settings", specifier = ">=2.15.0,<3.0.0" },
-    { name = "sentence-transformers", specifier = ">=6.0.0,<7.0.0" },
-    { name = "sqlalchemy", specifier = ">=2.0.52,<3.0.0" },
-]
+requires-dist = [{ name = "vexicon", specifier = ">=0.6.0,<0.7.0" }]
 
 [[package]]
 name = "watchfiles"
