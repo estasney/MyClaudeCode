@@ -18,6 +18,11 @@
             "type": "command",
             "if": "Read(~/.claude/plugins/data/*/handoffs/**)",
             "command": "echo '{\"hookSpecificOutput\":{\"hookEventName\":\"PermissionRequest\",\"decision\":{\"behavior\":\"allow\"}}}'"
+          },
+          {
+            "type": "command",
+            "if": "Read(~/.claude/plugins/cache/*/my-claude-code/*/skills/claude-code-mastery/references/**)",
+            "command": "echo '{\"hookSpecificOutput\":{\"hookEventName\":\"PermissionRequest\",\"decision\":{\"behavior\":\"allow\"}}}'"
           }
         ]
       }
