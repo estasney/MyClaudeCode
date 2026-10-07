@@ -197,7 +197,7 @@ Claude Code sends the following JSON fields to your script via stdin:
 | `prompt_cache` | The session's [prompt cache](/docs/en/prompt-caching) statistics for the main conversation: hit ratio, misses, and whether the cache is warm. See [prompt cache fields](#prompt-cache-fields) for every field. Absent until the main conversation's first API response. Requires Claude Code v2.1.251 or later |
 | `session_id` | Unique session identifier |
 | `session_name` | Session name. Uses the custom name set with the `--name` flag or `/rename` when one exists, otherwise the AI-generated session title. The [default display name](/docs/en/sessions#name-your-sessions), such as `my-app-3f`, doesn't populate this field. Absent when the session has neither a custom name nor an AI-generated title |
-| `prompt_id` | UUID identifying the user prompt currently being processed. Matches the [`prompt.id` attribute on OpenTelemetry events](/docs/en/monitoring-usage#event-correlation-attributes). Absent until the first user input. Requires Claude Code v2.1.196 or later |
+| `prompt_id` | UUID identifying the user prompt currently being processed. Matches the [`prompt.id` attribute on OpenTelemetry events](/docs/en/monitoring-usage#event-correlation-attributes). Absent until the first user input |
 | `transcript_path` | Path to conversation transcript file |
 | `version` | Claude Code version |
 | `output_style.name` | Name of the current output style |
@@ -1132,7 +1132,7 @@ The command runs once per refresh tick and receives all visible subagent rows as
 
 The per-task `model` field is the resolved model ID the task runs on. `contextWindowSize` is that model's context window in tokens, computed the same way as the main status line's `context_window.context_window_size`, so you can render a per-row percentage from `tokenCount`. Both fields require Claude Code v2.1.205 or later and are omitted for a task whose model isn't resolved yet.
 
-The per-task `effort` field is the reasoning effort set for that subagent, in its [definition frontmatter](/docs/en/sub-agents#supported-frontmatter-fields) or on the individual invocation. The value is either one of the effort level strings `low`, `medium`, `high`, `xhigh`, or `max`, or a numeric token budget. The field reports the configured value as written: if the model doesn't support that level, the effort Claude Code actually applies may differ. The field requires Claude Code v2.1.214 or later and is absent when the subagent inherits the session's effort level.
+The per-task `effort` field is the reasoning effort set for that subagent, in its [definition frontmatter](/docs/en/sub-agents#supported-frontmatter-fields) or on the individual invocation. The value is either one of the effort level strings `low`, `medium`, `high`, `xhigh`, or `max`, or a numeric token budget. The field reports the configured value as written: if the model doesn't support that level, the effort Claude Code actually applies may differ. The field requires Claude Code v2.1.214 or later and is absent when no level is set for the subagent.
 
 Write one JSON line to stdout per row you want to override, in the form `{"id": "<task id>", "content": "<row body>"}`. The `content` string is rendered as-is, including ANSI colors and OSC 8 hyperlinks. Omit a task's `id` to keep the default rendering for that row; emit an empty `content` string to hide it.
 

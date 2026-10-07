@@ -33,6 +33,38 @@ FETCH_TIMEOUT_SECONDS=30
 
 slugs=(
   advisor
+  agent-sdk/agent-loop
+  agent-sdk/claude-code-features
+  agent-sdk/configuration
+  agent-sdk/cost-tracking
+  agent-sdk/custom-tools
+  agent-sdk/examples
+  agent-sdk/file-checkpointing
+  agent-sdk/hooks
+  agent-sdk/hosting
+  agent-sdk/mcp
+  agent-sdk/migration-guide
+  agent-sdk/modifying-system-prompts
+  agent-sdk/observability
+  agent-sdk/overview
+  agent-sdk/permissions
+  agent-sdk/plugins
+  agent-sdk/python
+  agent-sdk/quickstart
+  agent-sdk/secure-deployment
+  agent-sdk/session-storage
+  agent-sdk/sessions
+  agent-sdk/skills
+  agent-sdk/streaming-output
+  agent-sdk/streaming-vs-single-mode
+  agent-sdk/structured-outputs
+  agent-sdk/subagents
+  agent-sdk/todo-tracking
+  agent-sdk/tool-search
+  agent-sdk/troubleshooting
+  agent-sdk/typescript
+  agent-sdk/typescript-v2-preview
+  agent-sdk/user-input
   agent-teams
   agent-view
   agents
@@ -74,12 +106,37 @@ slugs=(
   output-styles
   permission-modes
   permissions
-  plugin-dependencies
   plugin-evals
-  plugin-hints
-  plugin-marketplaces
-  plugins
-  plugins-reference
+  plugins/anthropic-marketplaces
+  plugins/cli-hints
+  plugins/cli-reference
+  plugins/code-intelligence
+  plugins/components
+  plugins/create
+  plugins/create-marketplace
+  plugins/dependencies
+  plugins/host-marketplace
+  plugins/install
+  plugins/loading
+  plugins/manifest-reference
+  plugins/marketplace-reference
+  plugins/measure
+  plugins/mods/admin
+  plugins/mods/api
+  plugins/mods/create
+  plugins/mods/events
+  plugins/mods/gallery
+  plugins/mods/interface
+  plugins/mods/overview
+  plugins/mods/reference
+  plugins/mods/test
+  plugins/mods/troubleshoot
+  plugins/org
+  plugins/overview
+  plugins/publish
+  plugins/relevance
+  plugins/security
+  plugins/troubleshooting
   prompt-caching
   prompt-library
   remote-control
@@ -104,7 +161,7 @@ slugs=(
 get_unlisted() {
   comm -13 \
     <(printf '%s\n' "${slugs[@]}" | sort -u) \
-    <(curl -fsSL --max-time "$FETCH_TIMEOUT_SECONDS" "$INDEX_URL" | grep -oE 'docs/en/[a-z0-9-]+\.md' | sed -E 's#docs/en/##; s#\.md$##' | sort -u)
+    <(curl -fsSL --max-time "$FETCH_TIMEOUT_SECONDS" "$INDEX_URL" | grep -oE 'docs/en/[a-z0-9/-]+\.md' | sed -E 's#docs/en/##; s#\.md$##' | sort -u)
 }
 
 case "${1:-}" in
@@ -128,23 +185,25 @@ for slug in "${slugs[@]}"; do
     failed+=("$slug (curl exit $status, http $code)")
     echo "FAIL  $slug  http=$code" >&2
   else
+    mkdir -p "$(dirname "$MANAGED_DIR/$slug.md")"
     mv "$tmp" "$MANAGED_DIR/$slug.md"
     echo "ok    $slug  http=$code"
   fi
   sleep "$FETCH_DELAY_SECONDS"
 done
 
-# Prune files the manifest omits.
-shopt -s nullglob
+# Prune files the manifest omits, then folders left empty.
+shopt -s nullglob globstar
 declare -A expected
 for slug in "${slugs[@]}"; do expected["$slug.md"]=1; done
-for path in "$MANAGED_DIR"/*.md; do
-  name="$(basename "$path")"
+for path in "$MANAGED_DIR"/**/*.md; do
+  name="${path#"$MANAGED_DIR"/}"
   if [[ -z "${expected[$name]:-}" ]]; then
     rm -f "$path"
     echo "prune $name"
   fi
 done
+find "$MANAGED_DIR" -mindepth 1 -type d -empty -delete
 
 if (( ${#failed[@]} )); then
   echo "" >&2

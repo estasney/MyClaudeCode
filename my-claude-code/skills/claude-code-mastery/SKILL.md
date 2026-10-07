@@ -7,7 +7,7 @@ allowed-tools: Bash(${CLAUDE_PLUGIN_ROOT}/scripts/list-references.sh *), Bash(gr
 
 # Claude Code Mastery
 
-Hard reference for operating Claude Code: the official docs mirrored verbatim as raw markdown. Each filename is the page slug.
+Hard reference for operating Claude Code: the official docs mirrored verbatim as raw markdown. Each path under `references/upstream/` is the page slug, so nested pages such as `plugins/mods/overview` sit in subfolders.
 
 Source of truth — the docs table of contents this is built from: https://code.claude.com/docs/llms.txt
 

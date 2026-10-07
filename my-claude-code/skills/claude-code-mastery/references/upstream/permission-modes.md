@@ -23,7 +23,7 @@ Each mode makes a different tradeoff between convenience and oversight. The tabl
 | [`dontAsk`](#allow-only-pre-approved-tools-with-dontask-mode) | Reads and pre-approved tools; anything that would prompt is denied | Locked-down CI and scripts |
 | [`bypassPermissions`](#skip-all-checks-with-bypasspermissions-mode) | Everything | Isolated containers and VMs only |
 
-The mode that reviews every action is named **Manual** in the CLI, in `claude --help`, in the VS Code and JetBrains extensions, and in the desktop app. Its config value is `default`, which is what hooks and SDK integrations use. The CLI accepts `manual` as an alias wherever you type the value, for example `claude --permission-mode manual` or `"defaultMode": "manual"`. The Manual label and the `manual` alias require Claude Code v2.1.200 or later. The desktop app's label doesn't depend on your CLI version.
+The mode that reviews every action is named **Manual** in the CLI, in `claude --help`, in the VS Code and JetBrains extensions, and in the desktop app. Its config value is `default`, which is what hooks and SDK integrations use. The CLI accepts `manual` as an alias wherever you type the value, for example `claude --permission-mode manual` or `"defaultMode": "manual"`.
 
 Writes to [protected paths](#protected-paths) are never auto-approved except in `bypassPermissions` mode and in plan-mode sessions where bypass permissions are available, meaning interactive terminal sessions started in a way that [puts `bypassPermissions` in the mode cycle](#switch-permission-modes).
 
@@ -83,6 +83,7 @@ The built-in default depends on how you run Claude Code. The first row that matc
 | :- | :- |
 | Any settings file sets `disableAutoMode` to `"disable"` | `default` |
 | `claude -p` or the [Agent SDK](/docs/en/agent-sdk/permissions#permission-modes) | `default` in sessions that [fetch feature flags](/docs/en/env-vars#features-that-need-feature-flag-fetching). In sessions that don't, such as on a third-party provider or with telemetry off, `auto` with Claude Code v2.1.285 or later and `default` on earlier versions. A session in an organization whose policy withholds the `auto` default starts in `default` instead |
+| Your organization has the [HIPAA configuration](#hipaa-configuration) applied and the session is [eligible for it](/docs/en/hipaa-setup#check-how-developers-sign-in-and-connect) | `default` with Claude Code v2.1.285 or later; auto mode stays available to switch to |
 | In a terminal or through the [VS Code extension](/docs/en/vs-code) | `auto` with Claude Code v2.1.283 or later; on earlier versions, `auto` on Pro, Max, or Team plans in sessions that [fetch feature flags](/docs/en/env-vars#features-that-need-feature-flag-fetching), and `default` otherwise |
 
 In your [first session after an install or upgrade](/docs/en/env-vars#first-session-after-an-install-or-upgrade), Claude Code can choose the starting permission mode before its feature flags arrive. That session can start in a different permission mode than the table gives.
@@ -120,6 +121,21 @@ This example makes every terminal session on your machine start in Manual mode, 
 ```
 
 The next session you start shows `⏸ manual mode on` in the status bar.
+
+<h3 id="hipaa-configuration">
+  Permission modes with the HIPAA configuration
+</h3>
+
+In an organization with the [HIPAA configuration](/docs/en/hipaa-setup) applied, the built-in `auto` default doesn't apply. A terminal or VS Code session starts in Manual mode when nothing else chooses its starting permission mode. A terminal session also shows `Auto mode isn't the default for your organization · Shift+Tab to switch`, and the VS Code extension shows no notice. [Check how developers sign in and connect](/docs/en/hipaa-setup#check-how-developers-sign-in-and-connect) lists the sessions this applies to.
+
+Auto mode and `bypassPermissions` stay available:
+
+* **Switch to auto mode**: press `Shift+Tab`, or use [your interface's control](#switch-permission-modes)
+* **Start in auto mode**: pass `--permission-mode auto`, or set `permissions.defaultMode` to `auto` in your user settings, or in managed settings for your whole organization. See [Start in a different permission mode](#start-in-a-different-mode)
+* **Remove auto mode**: set [`permissions.disableAutoMode`](/docs/en/settings-reference#disableautomode) to `"disable"` in managed settings
+* **Block `bypassPermissions`**: set [`permissions.disableBypassPermissionsMode`](/docs/en/settings-reference#permissions-disablebypasspermissionsmode) to `"disable"` in managed settings
+
+Requires Claude Code v2.1.285 or later, the [minimum version for the HIPAA configuration](/docs/en/hipaa-setup#update-claude-code-and-claude-desktop).
 
 ## Switch permission modes
 
@@ -341,7 +357,7 @@ To skip asking the server and always use Claude Code's own classifier requests, 
 
 ### What the classifier blocks by default
 
-The classifier trusts your working directory and the remotes that were configured for it when the session started. A remote added or repointed during the session with `git remote add` or `git remote set-url` isn't trusted, and everything else is treated as external until you [configure trusted infrastructure](/docs/en/auto-mode-config). Before v2.1.200, remotes added mid-session were also trusted.
+The classifier trusts your working directory and the remotes that were configured for it when the session started. A remote added or repointed during the session with `git remote add` or `git remote set-url` isn't trusted, and everything else is treated as external until you [configure trusted infrastructure](/docs/en/auto-mode-config).
 
 **Blocked by default**:
 
@@ -374,19 +390,16 @@ The classifier trusts your working directory and the remotes that were configure
 * Launching an autonomous agent loop that runs without human approval or a sandbox, such as one started with `--dangerously-skip-permissions` or `--no-sandbox`. This includes running a third-party agent or eval harness with isolation and per-action approval disabled, such as a runner started with `--yes-always`
 * [Claude in Chrome](/docs/en/chrome) browser actions that could send page content, cookies, or credentials off-origin
 * Deleting files in `/tmp`, `$TMPDIR`, or another shared scratch or cache directory by wildcard, glob, or age filter rather than by a specific named path
-* Including sensitive details in content sent, uploaded, published, or written to other people or shared systems, when your own message didn't authorize those details for that recipient. PR and issue bodies, commit messages, and comments count as this kind of outbound content when the repository is outside the trust boundary or public, including your organization's own public repositories; internal file paths, code names, live API response data such as emails or account identifiers, and infrastructure identifiers count as sensitive details. The PR, issue, and commit-message scoping requires Claude Code v2.1.200 or later. Live personal data from an API response in a PR or issue body, such as an email address, an account or organization identifier, or a usage metric, requires you to name those details and the recipient regardless of the repository's visibility or trust boundary. That check requires Claude Code v2.1.203 or later
+* Including sensitive details in content sent, uploaded, published, or written to other people or shared systems, when your own message didn't authorize those details for that recipient. PR and issue bodies, commit messages, and comments count as this kind of outbound content when the repository is outside the trust boundary or public, including your organization's own public repositories; internal file paths, code names, live API response data such as emails or account identifiers, and infrastructure identifiers count as sensitive details. Live personal data from an API response in a PR or issue body, such as an email address, an account or organization identifier, or a usage metric, requires you to name those details and the recipient regardless of the repository's visibility or trust boundary. That check requires Claude Code v2.1.203 or later
 * Sending keystrokes to Claude Code's own tmux pane to drive its own interface, which the classifier treats as Claude changing its own permissions or oversight
-
-Several of these categories depend on [environment](/docs/en/auto-mode-config#define-trusted-infrastructure) entries, such as sensitive remote targets and protected IaC scopes, that you can narrow to concrete names.
-
-Claude Code v2.1.200 and later also block these by default:
-
 * Commenting out, deleting, or force-passing a test or assertion that guards security behavior, such as auth, access control, input validation, or sandboxing
 * Deleting or tearing down a stateful resource Claude didn't create in the session, when no more specific deletion rule applies and you didn't name that resource
 * Repointing an API base URL, proxy endpoint, webhook receiver, or registry mirror at a third-party host that doesn't fit the task, including in example files like `.env.example`
 * Changing where pushes go with `git remote set-url` or `git remote add`, unless you named the new remote
 * Pushing secrets or personal or entrusted data to a repository known to be public, or pushing confidential material there that isn't part of that repository's own work. A dotfiles repository's own subject matter is the one exception for personal or entrusted data, and content from a private repository reaching any public surface is blocked the same way; both refinements require Claude Code v2.1.203 or later. Before v2.1.203, personal data was grouped with confidential material and blocked only when it wasn't part of that repository's own work. When a repository's visibility isn't established, the classifier doesn't block on that alone; it judges the content against the other rules instead
 * Opening a pull request against a different repository or organization, forking with `gh repo fork`, or pushing to a third-party repository, unless you named that external target
+
+Several of these categories depend on [environment](/docs/en/auto-mode-config#define-trusted-infrastructure) entries, such as sensitive remote targets and protected IaC scopes, that you can narrow to concrete names.
 
 Claude Code v2.1.203 and later also block these by default:
 
@@ -642,7 +655,12 @@ Protected directories:
 * `.devcontainer`
 * `.yarn`
 * `.mvn`
-* `.claude`, except for `.claude/worktrees` where Claude stores its own git worktrees, and except for the markdown files in Claude's own [auto memory](/docs/en/memory#storage-location) directory in a session started without `--restricted`
+* `.claude`, with a few exceptions, such as:
+  * Claude's own git worktrees under `.claude/worktrees/`
+  * The current session's own plan files in `~/.claude/plans/`, or in the [`plansDirectory`](/docs/en/settings-reference#plansdirectory) you set
+  * A [background session](/docs/en/agent-view#where-state-is-stored)'s own scratch directory at `~/.claude/jobs/<id>/tmp/`
+  * Markdown files in the project's [auto memory](/docs/en/memory#storage-location) directory, such as `~/.claude/projects/<project>/memory/`, in a session started without `--restricted`
+  * Markdown files in a [subagent memory](/docs/en/sub-agents#enable-persistent-memory) directory, such as `.claude/agent-memory/`, in a session started without `--restricted`
 * A directory you loaded with [`--plugin-dir`](/docs/en/plugins/mods/create#change-a-mod-with-claude), because Claude Code reloads and runs a mod's code from it when a file changes
 
 Protected files:
