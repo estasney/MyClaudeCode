@@ -3,9 +3,9 @@ from pathlib import Path
 import pytest
 
 from analyze_repo import orm
-from analyze_repo.indexer import collect_symbols, find_enclosing_symbol
-from analyze_repo.lsp import models as lsp
-from analyze_repo.syntax import PythonSyntaxTree
+from analyze_repo.indexing.lsp import models as lsp
+from analyze_repo.indexing.python import collect_symbols, find_enclosing_symbol
+from analyze_repo.indexing.syntax import PythonSyntaxTree
 
 
 def document_symbol(

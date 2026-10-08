@@ -1,17 +1,19 @@
 import asyncio
 import hashlib
 import re
+from collections.abc import Mapping
+from itertools import batched
 from pathlib import Path
 from typing import assert_never
 
 from sqlalchemy import delete, select
-from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from sqlalchemy.orm import aliased
 
 from analyze_repo import orm
-from analyze_repo.embedding import Embedder
-from analyze_repo.queries import symbols_with_summaries
-from analyze_repo.summarize import body_text
+from analyze_repo.queries.symbols import symbols_with_summaries
+from analyze_repo.semantic.embedding import Embedder
+from analyze_repo.semantic.summarize import body_text
 
 
 def split_words(text: str) -> list[str]:
@@ -48,10 +50,10 @@ def document_detail(
             assert_never(symbol.kind)
 
 
-async def embed_snapshot(
-    session: AsyncSession, snapshot: orm.Snapshot, repo_root: Path, embedder: Embedder
-) -> int:
-    """Rewrites the snapshot's search documents and returns how many vectors were written."""
+async def write_documents(
+    session: AsyncSession, snapshot: orm.Snapshot, repo_root: Path
+) -> None:
+    """Replaces the snapshot's search documents."""
     parent = aliased(orm.Symbol)
     searchable = (
         symbols_with_summaries()
@@ -83,6 +85,12 @@ async def embed_snapshot(
     )
     session.add_all(documents)
     await session.flush()
+
+
+async def texts_missing_vectors(
+    session: AsyncSession, snapshot: orm.Snapshot, model: str
+) -> dict[str, str]:
+    """Search document texts of the snapshot that model has not embedded keyed by text hash."""
     unembedded = (
         select(orm.SearchDocument.text_hash, orm.SearchDocument.text)
         .join(orm.Symbol, orm.SearchDocument.symbol)
@@ -90,28 +98,40 @@ async def embed_snapshot(
         .outerjoin(
             orm.Embedding,
             (orm.Embedding.text_hash == orm.SearchDocument.text_hash)
-            & (orm.Embedding.model == embedder.model),
+            & (orm.Embedding.model == model),
         )
         .where(orm.File.snapshot_id == snapshot.id)
         .where(orm.Embedding.text_hash.is_(None))
         .distinct()
     )
-    missing = dict((await session.execute(unembedded)).tuples().all())
-    if not missing:
-        return 0
-    vectors = await asyncio.to_thread(embedder.embed_documents, list(missing.values()))
-    session.add_all(
-        orm.Embedding(
-            text_hash=text_hash, model=embedder.model, vector=vector.tobytes()
+    return dict((await session.execute(unembedded)).tuples().all())
+
+
+async def embed_texts(
+    new_session: async_sessionmaker[AsyncSession],
+    texts_by_hash: Mapping[str, str],
+    embedder: Embedder,
+    batch_size: int,
+) -> int:
+    """Commits the vectors of each batch as it is embedded so an interrupted run keeps them."""
+    for batch in batched(texts_by_hash.items(), batch_size):
+        vectors = await asyncio.to_thread(
+            embedder.embed_documents, [text for _, text in batch]
         )
-        for text_hash, vector in zip(missing, vectors, strict=True)
-    )
-    await session.flush()
-    return len(missing)
+        async with new_session.begin() as session:
+            session.add_all(
+                orm.Embedding(
+                    text_hash=text_hash, model=embedder.model, vector=vector.tobytes()
+                )
+                for (text_hash, _), vector in zip(batch, vectors, strict=True)
+            )
+    return len(texts_by_hash)
 
 
 __all__ = [
     "document_text",
-    "embed_snapshot",
+    "embed_texts",
     "split_words",
+    "texts_missing_vectors",
+    "write_documents",
 ]

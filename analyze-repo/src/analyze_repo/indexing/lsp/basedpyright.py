@@ -9,7 +9,7 @@ from typing import IO, ClassVar
 
 from pydantic import TypeAdapter
 
-from analyze_repo.lsp.models import (
+from analyze_repo.indexing.lsp.models import (
     ClientCapabilities,
     DidOpenTextDocumentParams,
     DocumentSymbol,
@@ -39,13 +39,6 @@ from analyze_repo.lsp.models import (
     TIncomingMessage,
     WorkspaceClientCapabilities,
 )
-
-__all__ = [
-    "BasedPyright",
-    "ResponseError",
-    "ServerClosedError",
-    "start_basedpyright",
-]
 
 
 class ServerClosedError(RuntimeError):
@@ -224,3 +217,11 @@ def read_message(
         if name.strip().lower() == b"content-length":
             content_length = int(value)
     return incoming_adapter.validate_json(stdout.read(content_length))
+
+
+__all__ = [
+    "BasedPyright",
+    "ResponseError",
+    "ServerClosedError",
+    "start_basedpyright",
+]

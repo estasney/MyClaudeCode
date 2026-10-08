@@ -1,59 +1,11 @@
 from collections.abc import Sequence
-from enum import StrEnum
 
-from pydantic import BaseModel
 from sqlalchemy import ColumnElement, Select, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased, selectinload
 
 from analyze_repo import orm
-
-__all__ = [
-    "ReferenceInfo",
-    "SnapshotInfo",
-    "SymbolInfo",
-    "SymbolScope",
-    "get_snapshot",
-    "get_symbol",
-    "is_call_site",
-    "list_callees",
-    "list_callers",
-    "list_references",
-    "search_symbols",
-    "snapshot_info",
-    "symbol_info",
-    "symbols_with_summaries",
-]
-
-
-class SnapshotInfo(BaseModel):
-    snapshot_id: int
-    repo: str
-    digest: str
-    files: int
-    symbols: int
-    occurrences: int
-
-
-class SymbolInfo(BaseModel):
-    symbol_id: int
-    qualified_name: str
-    kind: orm.SymbolKind
-    path: str
-    start_line: int
-    end_line: int
-    summary: str | None
-    decorators: Sequence[str]
-
-
-class ReferenceInfo(BaseModel):
-    path: str
-    line: int
-    column: int
-    node_kind: str
-    parent_kind: str
-    parent_field: str | None
-    enclosing_symbol: str | None
+from analyze_repo.models import ReferenceInfo, SnapshotInfo, SymbolInfo, SymbolScope
 
 
 class UnknownSnapshotError(LookupError):
@@ -127,13 +79,6 @@ async def snapshot_info(session: AsyncSession, snapshot: orm.Snapshot) -> Snapsh
         symbols=await count_rows(session, symbols),
         occurrences=await count_rows(session, occurrences),
     )
-
-
-class SymbolScope(StrEnum):
-    """Which nesting levels a symbol search covers."""
-
-    module_and_class = "module_and_class"
-    all = "all"
 
 
 async def search_symbols(
@@ -217,3 +162,19 @@ async def list_callees(
         symbol_info(callee, summary)
         for callee, summary in await session.execute(statement)
     ]
+
+
+__all__ = [
+    "UnknownSnapshotError",
+    "UnknownSymbolError",
+    "get_snapshot",
+    "get_symbol",
+    "is_call_site",
+    "list_callees",
+    "list_callers",
+    "list_references",
+    "search_symbols",
+    "snapshot_info",
+    "symbol_info",
+    "symbols_with_summaries",
+]

@@ -18,39 +18,6 @@ from pydantic import (
 )
 from pydantic.alias_generators import to_camel
 
-__all__ = [
-    "ClientCapabilities",
-    "DidOpenTextDocumentParams",
-    "DocumentSymbol",
-    "DocumentSymbolClientCapabilities",
-    "DocumentSymbolParams",
-    "ErrorReply",
-    "ExitParams",
-    "InitializeParams",
-    "InitializeResult",
-    "InitializedParams",
-    "InterpreterConfiguration",
-    "LanguageId",
-    "Location",
-    "NotificationParams",
-    "Position",
-    "Range",
-    "ReferenceContext",
-    "ReferenceParams",
-    "Reply",
-    "RequestParams",
-    "Response",
-    "ServerRequest",
-    "ServerRequestMethod",
-    "ShutdownParams",
-    "SymbolKind",
-    "TIncomingMessage",
-    "TextDocumentClientCapabilities",
-    "TextDocumentIdentifier",
-    "TextDocumentItem",
-    "WorkspaceClientCapabilities",
-]
-
 
 class RequestMethod(StrEnum):
     initialize = "initialize"
@@ -318,3 +285,37 @@ class InterpreterConfiguration(WireModel):
     """Answer to `workspace/configuration` for section `python`."""
 
     python_path: Path
+
+
+__all__ = [
+    "ClientCapabilities",
+    "DidOpenTextDocumentParams",
+    "DocumentSymbol",
+    "DocumentSymbolClientCapabilities",
+    "DocumentSymbolParams",
+    "ErrorReply",
+    "ExitParams",
+    "InitializeParams",
+    "InitializeResult",
+    "InitializedParams",
+    "InterpreterConfiguration",
+    "LanguageId",
+    "Location",
+    "NotificationParams",
+    "Position",
+    "Range",
+    "ReferenceContext",
+    "ReferenceParams",
+    "Reply",
+    "RequestParams",
+    "Response",
+    "ServerRequest",
+    "ServerRequestMethod",
+    "ShutdownParams",
+    "SymbolKind",
+    "TIncomingMessage",
+    "TextDocumentClientCapabilities",
+    "TextDocumentIdentifier",
+    "TextDocumentItem",
+    "WorkspaceClientCapabilities",
+]

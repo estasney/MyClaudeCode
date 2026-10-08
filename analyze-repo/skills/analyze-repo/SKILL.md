@@ -11,23 +11,23 @@ The `analyze-repo` MCP server indexes one git commit of a repository at a time. 
 
 ## Tools
 
-- `index_repository(repo_root, toolchain_overrides)` — indexes the working tree. The interpreter of the repository's own environment is discovered from the one virtual environment under `repo_root`, so imports resolve against its installed packages; `toolchain_overrides` maps `python` onto an explicit interpreter path when discovery fails. A second call for an unchanged tree returns the stored snapshot without re-indexing. Returns the snapshot id and row counts.
-- `summarize_repository(snapshot_id)` — asks a model for a three-sentence description of every class, function and method that lacks one. Summaries are keyed by body hash, so bodies unchanged between commits are described once. Costs one model call per body; run it once per repository, not per question.
+- `get_analysis_status(repo_root)` — free and read only. Reports whether the working tree as it is now has a snapshot, how many summaries and vectors it still lacks, and `next_step`. The status is null when the tree changed since it was last indexed or was never indexed.
+- `index_repository(repo_root, toolchain_overrides)` — free. Indexes the working tree, then writes a search document for every class, function, method, parameter, and module or class level variable and embeds each document text with a local model. The interpreter of the repository's own environment is discovered from the one virtual environment under `repo_root`, so imports resolve against its installed packages; `toolchain_overrides` maps `python` onto an explicit interpreter path when discovery fails. A second call for an unchanged tree returns the stored snapshot without re-indexing and embeds only what is still missing. Returns a report holding the snapshot id, row counts, how many summaries and vectors are missing, and `next_step`, which names the tool to call next.
+- `summarize_repository(snapshot_id)` — paid. First asks the user through an MCP dialog to approve the number of model calls. A declined approval returns the report unchanged and its `next_step` says so; call it again only when the user asks. Then asks a model for a three-sentence description of every class, function and method that lacks one, then embeds the search documents that now include them. Summaries are keyed by body hash, so bodies unchanged between commits are described once. Costs one model call per body; run it once per repository, not per question. Each summary is saved as it arrives, so after an interruption or a reported failure a rerun requests only the summaries still missing. Returns the same report as `index_repository`.
 - `search_symbols(snapshot_id, name_fragment, scope)` — symbols whose dotted qualified name contains the fragment, with file, line span, kind, decorators and summary. Qualified names join enclosing names with dots, so `Client.connect` finds a method and `connect` finds every symbol named that. Scope `module_and_class` returns definitions and class members; `all` adds parameters and locals.
 - `list_references(symbol_id)` — every location that refers to the symbol, with its file, line, syntactic role (`node_kind`, `parent_kind`, `parent_field`) and the symbol whose body contains it.
 - `list_callers(symbol_id)` — symbols whose body calls this symbol.
 - `list_callees(symbol_id)` — symbols this symbol's body calls.
-- `embed_repository(snapshot_id)` — writes a search document for every class, function, method, parameter, and module or class level variable, then embeds each document text the configured model has not embedded yet. Definitions are described by their summary and values by their source line, so run `summarize_repository` first when function-level questions matter. Vectors are keyed by text and model, so re-running after summaries are added embeds only the changed documents.
-- `search_code(snapshot_id, question, limit)` — symbols relevant to a natural language question, ranked by fusing keyword (BM25) and embedding similarity. A matching parameter is listed under the function that declares it in `matched_parameters`. `entry_points` lists the callers reached from the symbol that nothing calls in turn, with their decorators, which is where a user-facing tool, command or test usually sits.
+- `search_code(snapshot_id, question, limit)` — symbols relevant to a natural language question, ranked by fusing keyword (BM25) and embedding similarity. Definitions are described by their summary and values by their source line, so without summaries a function matches by its names only. A matching parameter is listed under the function that declares it in `matched_parameters`. `entry_points` lists the callers reached from the symbol that nothing calls in turn, with their decorators, which is where a user-facing tool, command or test usually sits.
 
 ## Workflow
 
 1. Confirm the repository is a git checkout and locate its interpreter.
-2. `index_repository`, then keep the returned `snapshot_id` for the session.
+2. `get_analysis_status`, then `index_repository` when its `next_step` names it. Keep the `snapshot_id` for the session.
 3. `search_symbols` to turn a name into a `symbol_id`.
 4. `list_callers`, `list_callees`, or `list_references` to walk the graph from there.
-5. `summarize_repository` only when the user asks what code does, or when orientation in a large unfamiliar repository is the task.
-6. For a question phrased in words rather than names ("how do I set the batch size"), run `embed_repository` once per snapshot, then `search_code`. Answer from the hits and their entry points, then confirm with `list_references` or by reading the file.
+5. `summarize_repository` only when the user asks what code does, or when orientation in a large unfamiliar repository is the task. It is the only paid call.
+6. For a question phrased in words rather than names ("how do I set the batch size"), `search_code`. Answer from the hits and their entry points, then confirm with `list_references` or by reading the file.
 
 ## Reading the Results
 

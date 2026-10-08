@@ -31,7 +31,7 @@ dev = [
 ]
 
 [project.scripts]
-analyze-repo = "analyze_repo.server:main"
+analyze-repo = "analyze_repo.mcp:main"
 
 [build-system]
 requires = ["uv_build>=0.12.17,<0.13.0"]

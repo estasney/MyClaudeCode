@@ -3,13 +3,6 @@ from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
-__all__ = [
-    "IgnoreRule",
-    "IgnoreScope",
-    "is_ignored",
-    "parse_gitignore",
-]
-
 
 @dataclass(frozen=True)
 class IgnoreRule:
@@ -219,3 +212,11 @@ def posix_class_members(name: str) -> str | None:
         "xdigit": "0-9A-Fa-f",
     }
     return classes.get(name)
+
+
+__all__ = [
+    "IgnoreRule",
+    "IgnoreScope",
+    "is_ignored",
+    "parse_gitignore",
+]

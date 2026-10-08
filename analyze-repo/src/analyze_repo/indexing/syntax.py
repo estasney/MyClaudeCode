@@ -3,13 +3,7 @@ from dataclasses import dataclass
 from tree_sitter import Node, Tree
 from tree_sitter_language_pack import get_parser
 
-from analyze_repo.lsp.models import Position
-
-__all__ = [
-    "PythonSyntaxTree",
-    "SyntaxContext",
-    "utf16_offset_to_byte_offset",
-]
+from analyze_repo.indexing.lsp.models import Position
 
 
 @dataclass(frozen=True)
@@ -90,6 +84,13 @@ class PythonSyntaxTree:
             self.source[expression.start_byte : expression.end_byte].decode("utf-8")
             for expression in expressions
         ]
+
+
+__all__ = [
+    "PythonSyntaxTree",
+    "SyntaxContext",
+    "utf16_offset_to_byte_offset",
+]
 
 
 def reference_expression(node: Node) -> Node:

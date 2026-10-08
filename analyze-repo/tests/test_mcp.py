@@ -1,46 +1,25 @@
-import hashlib
 import sys
 import venv
-from collections.abc import AsyncIterator, Sequence
+from collections.abc import AsyncIterator
 from pathlib import Path
 from textwrap import dedent
+from typing import Literal
 
-import numpy as np
 import pytest
 import pytest_asyncio
 from fastmcp import Client
+from fastmcp.client.elicitation import ElicitRequestParams, ElicitResult
 from fastmcp.client.transports import FastMCPTransport
-from fastmcp.exceptions import ToolError
-from numpy.typing import NDArray
 
-from analyze_repo.db import run_migrations
-from analyze_repo.documents import split_words
-from analyze_repo.queries import SymbolScope
-from analyze_repo.server import build_server
-from analyze_repo.settings import Settings
-
-
-class WordHashEmbedder:
-    """Hashes each word onto one of a few dimensions so tests load no model."""
-
-    model = "word-hash"
-
-    def embed_documents(self, texts: Sequence[str]) -> NDArray[np.float32]:
-        return np.stack([self.embed_query(text) for text in texts])
-
-    def embed_query(self, text: str) -> NDArray[np.float32]:
-        vector = np.zeros(64, dtype=np.float32)
-        for word in split_words(text):
-            vector[int(hashlib.sha256(word.encode()).hexdigest(), 16) % 64] += 1
-        return vector / np.linalg.norm(vector)
+from analyze_repo.analyzer import RepoAnalyzer
+from analyze_repo.mcp import build_server
+from analyze_repo.models import SymbolScope
 
 
 @pytest_asyncio.fixture
-async def client(tmp_path: Path) -> AsyncIterator[Client[FastMCPTransport]]:
+async def client(analyzer: RepoAnalyzer) -> AsyncIterator[Client[FastMCPTransport]]:
     """The server as `main` builds it, over the in-memory transport."""
-    settings = Settings(data_dir=tmp_path / "data")
-    run_migrations(settings.db_path)
-    async with Client(build_server(settings, WordHashEmbedder())) as client:
+    async with Client(build_server(analyzer)) as client:
         yield client
 
 
@@ -142,7 +121,7 @@ async def test_list_callers_over_mcp(
     found = await client.call_tool(
         "search_symbols",
         {
-            "snapshot_id": indexed.data.snapshot_id,
+            "snapshot_id": indexed.data.status.snapshot.snapshot_id,
             "name_fragment": callee,
             "scope": SymbolScope.module_and_class,
         },
@@ -214,7 +193,7 @@ async def test_index_repository_discovers_the_venv_under_the_root(
     found = await client.call_tool(
         "search_symbols",
         {
-            "snapshot_id": indexed.data.snapshot_id,
+            "snapshot_id": indexed.data.status.snapshot.snapshot_id,
             "name_fragment": "helper",
             "scope": SymbolScope.module_and_class,
         },
@@ -255,7 +234,7 @@ async def test_search_code_answers_with_the_owner_and_its_entry_point(
     client: Client[FastMCPTransport], working_tree: Path
 ) -> None:
     """Arrange: a decorated tool that forwards its batch size to a client method.
-    Act: index and embed the tree then ask how to set the batch size of a space.
+    Act: index the tree then ask how to set the batch size of a space.
     Assert: both functions lead under their batch size parameter and the client
     method is reached from the decorated tool."""
     indexed = await client.call_tool(
@@ -265,8 +244,7 @@ async def test_search_code_answers_with_the_owner_and_its_entry_point(
             "toolchain_overrides": {"python": sys.executable},
         },
     )
-    snapshot_id = indexed.data.snapshot_id
-    await client.call_tool("embed_repository", {"snapshot_id": snapshot_id})
+    snapshot_id = indexed.data.status.snapshot.snapshot_id
     found = await client.call_tool(
         "search_code",
         {
@@ -302,12 +280,13 @@ async def test_search_code_answers_with_the_owner_and_its_entry_point(
     ids=["one module"],
 )
 @pytest.mark.asyncio
-async def test_search_code_requires_embed_repository(
+async def test_index_repository_names_the_paid_summarize_call_next(
     client: Client[FastMCPTransport], working_tree: Path
 ) -> None:
-    """Arrange: an indexed working tree that was not embedded.
-    Act: search it.
-    Assert: the tool fails and names the step that was skipped."""
+    """Arrange: a working tree with one function.
+    Act: index it through the server.
+    Assert: every document is embedded and the report names summarize_repository
+    for the one body without a summary."""
     indexed = await client.call_tool(
         "index_repository",
         {
@@ -315,8 +294,164 @@ async def test_search_code_requires_embed_repository(
             "toolchain_overrides": {"python": sys.executable},
         },
     )
-    with pytest.raises(ToolError, match="embed_repository"):
-        await client.call_tool(
-            "search_code",
-            {"snapshot_id": indexed.data.snapshot_id, "question": "helper"},
+    status = indexed.data.status
+    assert (status.missing_vectors, status.missing_summaries) == (0, 1), (
+        f"the free call should embed everything and summarize nothing, got {status}"
+    )
+    assert "summarize_repository" in indexed.data.next_step, (
+        f"the next step should name the paid call, got {indexed.data.next_step}"
+    )
+
+
+@pytest.mark.parametrize(
+    "working_tree",
+    [{"lib.py": "def helper() -> int:\n    return 1\n"}],
+    indirect=True,
+    ids=["one module"],
+)
+@pytest.mark.asyncio
+async def test_summarize_repository_reports_the_analysis_complete(
+    client: Client[FastMCPTransport], working_tree: Path
+) -> None:
+    """Arrange: an indexed working tree with one function.
+    Act: summarize it through the server.
+    Assert: nothing is missing and the report says the analysis is complete."""
+    indexed = await client.call_tool(
+        "index_repository",
+        {
+            "repo_root": str(working_tree),
+            "toolchain_overrides": {"python": sys.executable},
+        },
+    )
+    summarized = await client.call_tool(
+        "summarize_repository",
+        {"snapshot_id": indexed.data.status.snapshot.snapshot_id},
+    )
+    status = summarized.data.status
+    assert (status.missing_vectors, status.missing_summaries) == (0, 0), (
+        f"the paid call should leave nothing missing, got {status}"
+    )
+    assert summarized.data.next_step.startswith("Analysis is complete"), (
+        f"the next step should report completion, got {summarized.data.next_step}"
+    )
+
+
+@pytest.mark.parametrize(
+    "working_tree",
+    [{"lib.py": "def helper() -> int:\n    return 1\n"}],
+    indirect=True,
+    ids=["one module"],
+)
+@pytest.mark.asyncio
+async def test_get_analysis_status_names_index_repository_once_the_tree_changes(
+    client: Client[FastMCPTransport], working_tree: Path
+) -> None:
+    """Arrange: an indexed working tree whose module is then edited.
+    Act: ask for its analysis status.
+    Assert: the edited tree has no status and index_repository is named next."""
+    await client.call_tool(
+        "index_repository",
+        {
+            "repo_root": str(working_tree),
+            "toolchain_overrides": {"python": sys.executable},
+        },
+    )
+    (working_tree / "lib.py").write_text("def helper() -> int:\n    return 2\n")
+    reported = await client.call_tool(
+        "get_analysis_status", {"repo_root": str(working_tree)}
+    )
+    assert reported.data.status is None, (
+        f"an edited tree should have no snapshot, got {reported.data.status}"
+    )
+    assert "index_repository" in reported.data.next_step, (
+        f"the next step should name the free call, got {reported.data.next_step}"
+    )
+
+
+@pytest.mark.parametrize(
+    "working_tree",
+    [{"lib.py": "def helper() -> int:\n    return 1\n"}],
+    indirect=True,
+    ids=["one module"],
+)
+@pytest.mark.asyncio
+async def test_get_analysis_status_repeats_the_report_of_the_free_call(
+    client: Client[FastMCPTransport], working_tree: Path
+) -> None:
+    """Arrange: an indexed working tree.
+    Act: ask for its analysis status.
+    Assert: the status report equals the report index_repository returned."""
+    indexed = await client.call_tool(
+        "index_repository",
+        {
+            "repo_root": str(working_tree),
+            "toolchain_overrides": {"python": sys.executable},
+        },
+    )
+    reported = await client.call_tool(
+        "get_analysis_status", {"repo_root": str(working_tree)}
+    )
+    assert reported.data == indexed.data, (
+        f"the status should repeat {indexed.data}, got {reported.data}"
+    )
+
+
+@pytest.mark.parametrize(
+    ("working_tree", "mode", "action", "expected_missing_summaries"),
+    [
+        ({"lib.py": "def helper() -> int:\n    return 1\n"}, "auto", "accept", 0),
+        ({"lib.py": "def helper() -> int:\n    return 1\n"}, "legacy", "accept", 0),
+        ({"lib.py": "def helper() -> int:\n    return 1\n"}, "auto", "decline", 1),
+        ({"lib.py": "def helper() -> int:\n    return 1\n"}, "legacy", "decline", 1),
+    ],
+    indirect=["working_tree"],
+    ids=[
+        "accepted as a returned request",
+        "accepted over the session",
+        "declined as a returned request",
+        "declined over the session",
+    ],
+)
+@pytest.mark.asyncio
+async def test_summarize_repository_asks_the_user_before_paying(
+    analyzer: RepoAnalyzer,
+    working_tree: Path,
+    mode: Literal["auto", "legacy"],
+    action: Literal["accept", "decline"],
+    expected_missing_summaries: int,
+) -> None:
+    """Arrange: an indexed module and a client whose user answers every approval
+    with one action. auto negotiates the 2026-07-28 protocol and legacy an
+    earlier one.
+    Act: summarize the snapshot through that client.
+    Assert: the user is asked once and the summary is written only on accept."""
+    questions: list[str] = []
+
+    async def answer(
+        message: str,
+        response_type: type | None,
+        params: ElicitRequestParams,
+        context: object,
+    ) -> ElicitResult:
+        questions.append(message)
+        return ElicitResult(action=action)
+
+    async with Client(
+        build_server(analyzer), mode=mode, elicitation_handler=answer
+    ) as client:
+        indexed = await client.call_tool(
+            "index_repository",
+            {
+                "repo_root": str(working_tree),
+                "toolchain_overrides": {"python": sys.executable},
+            },
         )
+        summarized = await client.call_tool(
+            "summarize_repository",
+            {"snapshot_id": indexed.data.status.snapshot.snapshot_id},
+        )
+    outcome = (len(questions), summarized.data.status.missing_summaries)
+    assert outcome == (1, expected_missing_summaries), (
+        f"one question and {expected_missing_summaries} missing summaries expected "
+        f"after {action}, got {outcome} with questions {questions}"
+    )

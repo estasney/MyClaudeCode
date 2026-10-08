@@ -2,7 +2,7 @@ from pathlib import Path
 
 import pytest
 
-from analyze_repo.pipeline import list_working_tree_files
+from analyze_repo.indexing.pipeline import list_working_tree_files
 
 
 @pytest.mark.parametrize(

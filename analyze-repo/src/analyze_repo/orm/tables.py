@@ -15,21 +15,6 @@ from sqlalchemy import Enum as SQLEnum
 from sqlalchemy.ext.asyncio import AsyncAttrs
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
-__all__ = [
-    "Base",
-    "Decorator",
-    "Embedding",
-    "File",
-    "Language",
-    "Occurrence",
-    "Repo",
-    "SearchDocument",
-    "Snapshot",
-    "Summary",
-    "Symbol",
-    "SymbolKind",
-]
-
 
 class Language(StrEnum):
     python = "python"
@@ -259,3 +244,19 @@ class Embedding(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )
+
+
+__all__ = [
+    "Base",
+    "Decorator",
+    "Embedding",
+    "File",
+    "Language",
+    "Occurrence",
+    "Repo",
+    "SearchDocument",
+    "Snapshot",
+    "Summary",
+    "Symbol",
+    "SymbolKind",
+]

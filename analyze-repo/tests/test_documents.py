@@ -1,7 +1,7 @@
 import pytest
 
 from analyze_repo import orm
-from analyze_repo.documents import document_text, split_words
+from analyze_repo.semantic.documents import document_text, split_words
 
 
 @pytest.mark.parametrize(

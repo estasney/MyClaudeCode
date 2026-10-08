@@ -8,7 +8,7 @@ import pytest
 from hypothesis import given, settings
 from hypothesis import strategies as st
 
-from analyze_repo.pipeline import list_working_tree_files
+from analyze_repo.indexing.pipeline import list_working_tree_files
 
 NAME_ALPHABET = "abcAB01.-_ "
 

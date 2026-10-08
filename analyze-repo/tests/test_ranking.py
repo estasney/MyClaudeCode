@@ -2,7 +2,7 @@ from collections.abc import Mapping, Sequence
 
 import pytest
 
-from analyze_repo.search import (
+from analyze_repo.semantic.ranking import (
     Candidate,
     SubjectMatch,
     find_entry_points,

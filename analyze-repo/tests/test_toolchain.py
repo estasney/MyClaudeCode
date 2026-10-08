@@ -3,7 +3,7 @@ from pathlib import Path
 
 import pytest
 
-from analyze_repo.interpreter import (
+from analyze_repo.indexing.toolchain import (
     AmbiguousInterpreterError,
     PosixVenvLayout,
     PythonToolchainDiscovery,

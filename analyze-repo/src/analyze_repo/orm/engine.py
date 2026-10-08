@@ -10,12 +10,6 @@ from sqlalchemy.pool import ConnectionPoolEntry
 
 from analyze_repo.settings import Settings
 
-__all__ = [
-    "apply_sqlite_pragmas",
-    "create_index_engine",
-    "run_migrations",
-]
-
 
 def apply_sqlite_pragmas(engine: Engine) -> None:
     def set_pragmas(
@@ -46,3 +40,10 @@ def migration_config(db_path: Path) -> Config:
 def run_migrations(db_path: Path) -> None:
     """Blocking; call before the event loop starts."""
     command.upgrade(migration_config(db_path), "head")
+
+
+__all__ = [
+    "apply_sqlite_pragmas",
+    "create_index_engine",
+    "run_migrations",
+]

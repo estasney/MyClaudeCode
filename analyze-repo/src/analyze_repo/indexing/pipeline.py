@@ -10,20 +10,8 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from analyze_repo import orm
-from analyze_repo.gitignore import IgnoreScope, is_ignored, parse_gitignore
-from analyze_repo.indexer import RepoIndex, persist_index
-
-__all__ = [
-    "IndexerRegistration",
-    "LanguageIndexer",
-    "WorkingTree",
-    "build_indexers",
-    "build_indexes",
-    "describe_working_tree",
-    "index_working_tree",
-    "list_working_tree_files",
-    "working_tree_digest",
-]
+from analyze_repo.indexing.gitignore import IgnoreScope, is_ignored, parse_gitignore
+from analyze_repo.indexing.python import RepoIndex, persist_index
 
 
 class LanguageIndexer(Protocol):
@@ -143,11 +131,12 @@ async def get_or_create_repo(session: AsyncSession, root: Path) -> orm.Repo:
 
 
 async def find_snapshot(
-    session: AsyncSession, repo: orm.Repo, digest: str
+    session: AsyncSession, root: Path, digest: str
 ) -> orm.Snapshot | None:
     return await session.scalar(
         select(orm.Snapshot)
-        .where(orm.Snapshot.repo == repo)
+        .join(orm.Repo)
+        .where(orm.Repo.location == str(root))
         .where(orm.Snapshot.digest == digest)
     )
 
@@ -157,13 +146,29 @@ async def index_working_tree(
 ) -> orm.Snapshot:
     """Indexes the working tree once per content digest; an unchanged tree returns the stored snapshot."""
     tree = await asyncio.to_thread(describe_working_tree, repo_root)
-    repo = await get_or_create_repo(session, tree.root)
-    snapshot = await find_snapshot(session, repo, tree.digest)
+    snapshot = await find_snapshot(session, tree.root, tree.digest)
     if snapshot is not None:
         return snapshot
     indexes = await asyncio.to_thread(build_indexes, tree, indexers)
-    snapshot = orm.Snapshot(repo=repo, digest=tree.digest)
+    snapshot = orm.Snapshot(
+        repo=await get_or_create_repo(session, tree.root), digest=tree.digest
+    )
     session.add(snapshot)
     for index in indexes:
         await persist_index(session, snapshot, tree.root, index)
+    await session.flush()
     return snapshot
+
+
+__all__ = [
+    "IndexerRegistration",
+    "LanguageIndexer",
+    "WorkingTree",
+    "build_indexers",
+    "build_indexes",
+    "describe_working_tree",
+    "find_snapshot",
+    "index_working_tree",
+    "list_working_tree_files",
+    "working_tree_digest",
+]

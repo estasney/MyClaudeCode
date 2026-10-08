@@ -6,20 +6,10 @@ from pathlib import Path
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from analyze_repo import orm
-from analyze_repo.lsp import models as lsp
-from analyze_repo.lsp.basedpyright import start_basedpyright
-from analyze_repo.lsp.protocol import LanguageServer
-from analyze_repo.syntax import PythonSyntaxTree, SyntaxContext
-
-__all__ = [
-    "IndexedOccurrence",
-    "IndexedSymbol",
-    "PythonIndexer",
-    "RepoIndex",
-    "collect_symbols",
-    "find_enclosing_symbol",
-    "persist_index",
-]
+from analyze_repo.indexing.lsp import models as lsp
+from analyze_repo.indexing.lsp.basedpyright import start_basedpyright
+from analyze_repo.indexing.lsp.protocol import LanguageServer
+from analyze_repo.indexing.syntax import PythonSyntaxTree, SyntaxContext
 
 
 @dataclass(frozen=True)
@@ -237,3 +227,14 @@ async def persist_index(
         for occurrence in index.occurrences
     )
     await session.flush()
+
+
+__all__ = [
+    "IndexedOccurrence",
+    "IndexedSymbol",
+    "PythonIndexer",
+    "RepoIndex",
+    "collect_symbols",
+    "find_enclosing_symbol",
+    "persist_index",
+]

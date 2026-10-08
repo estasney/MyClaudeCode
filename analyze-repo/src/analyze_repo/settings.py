@@ -4,11 +4,6 @@ from pathlib import Path
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-__all__ = [
-    "Settings",
-    "get_settings",
-]
-
 
 class Settings(BaseSettings):
     """Read from ANALYZE_REPO_* environment variables set by the plugin's .mcp.json."""
@@ -55,3 +50,9 @@ class Settings(BaseSettings):
 @lru_cache(maxsize=1)
 def get_settings() -> Settings:
     return Settings()  # pyright: ignore[reportCallIssue]
+
+
+__all__ = [
+    "Settings",
+    "get_settings",
+]

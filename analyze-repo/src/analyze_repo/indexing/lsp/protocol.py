@@ -1,11 +1,7 @@
 from pathlib import Path
 from typing import Protocol
 
-from analyze_repo.lsp.models import DocumentSymbol, Location, Position
-
-__all__ = [
-    "LanguageServer",
-]
+from analyze_repo.indexing.lsp.models import DocumentSymbol, Location, Position
 
 
 class LanguageServer(Protocol):
@@ -16,3 +12,8 @@ class LanguageServer(Protocol):
     def find_references(
         self, absolute_path: Path, position: Position
     ) -> list[Location]: ...
+
+
+__all__ = [
+    "LanguageServer",
+]

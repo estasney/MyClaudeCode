@@ -7,8 +7,12 @@ from pathlib import Path
 import pytest
 from pydantic import TypeAdapter
 
-from analyze_repo.lsp.basedpyright import BasedPyright, ResponseError, ServerClosedError
-from analyze_repo.lsp.models import (
+from analyze_repo.indexing.lsp.basedpyright import (
+    BasedPyright,
+    ResponseError,
+    ServerClosedError,
+)
+from analyze_repo.indexing.lsp.models import (
     DocumentSymbol,
     DocumentSymbolParams,
     TextDocumentIdentifier,

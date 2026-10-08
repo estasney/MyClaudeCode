@@ -1,7 +1,7 @@
 import pytest
 
-from analyze_repo.lsp.models import Position
-from analyze_repo.syntax import (
+from analyze_repo.indexing.lsp.models import Position
+from analyze_repo.indexing.syntax import (
     PythonSyntaxTree,
     SyntaxContext,
     utf16_offset_to_byte_offset,

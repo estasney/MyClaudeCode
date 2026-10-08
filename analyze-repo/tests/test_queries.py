@@ -5,16 +5,23 @@ import pytest
 import pytest_asyncio
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
-from analyze_repo import orm, queries
-from analyze_repo.db import apply_sqlite_pragmas, run_migrations
-from analyze_repo.indexer import (
+from analyze_repo import orm
+from analyze_repo.indexing.lsp import models as lsp
+from analyze_repo.indexing.python import (
     IndexedOccurrence,
     IndexedSymbol,
     RepoIndex,
     persist_index,
 )
-from analyze_repo.lsp import models as lsp
-from analyze_repo.syntax import SyntaxContext
+from analyze_repo.indexing.syntax import SyntaxContext
+from analyze_repo.models import SymbolScope
+from analyze_repo.orm.engine import apply_sqlite_pragmas, run_migrations
+from analyze_repo.queries.symbols import (
+    get_symbol,
+    list_callees,
+    list_callers,
+    search_symbols,
+)
 
 
 @pytest_asyncio.fixture
@@ -99,15 +106,13 @@ async def test_call_edges_derive_from_occurrence_role(
     )
     rows = {
         row.qualified_name: row
-        for row in await queries.search_symbols(
-            session, snapshot, "", queries.SymbolScope.all
-        )
+        for row in await search_symbols(session, snapshot, "", SymbolScope.all)
     }
-    callers = await queries.list_callers(
-        session, await queries.get_symbol(session, rows["callee"].symbol_id)
+    callers = await list_callers(
+        session, await get_symbol(session, rows["callee"].symbol_id)
     )
-    callees = await queries.list_callees(
-        session, await queries.get_symbol(session, rows["caller"].symbol_id)
+    callees = await list_callees(
+        session, await get_symbol(session, rows["caller"].symbol_id)
     )
     assert [c.qualified_name for c in callers] == expected_callers, (
         f"role {context} should give callers {expected_callers}, got {callers}"
@@ -121,11 +126,11 @@ async def test_call_edges_derive_from_occurrence_role(
     ("scope", "expected"),
     [
         (
-            queries.SymbolScope.module_and_class,
+            SymbolScope.module_and_class,
             ["Client", "Client.timeout", "Client.connect"],
         ),
         (
-            queries.SymbolScope.all,
+            SymbolScope.all,
             ["Client", "Client.timeout", "Client.connect", "Client.connect.host"],
         ),
     ],
@@ -133,7 +138,7 @@ async def test_call_edges_derive_from_occurrence_role(
 )
 @pytest.mark.asyncio
 async def test_search_symbols_scope(
-    session: AsyncSession, scope: queries.SymbolScope, expected: list[str]
+    session: AsyncSession, scope: SymbolScope, expected: list[str]
 ) -> None:
     """Arrange: a class with an attribute and a method that has a parameter.
     Act: search with an empty fragment under each scope.
@@ -165,6 +170,6 @@ async def test_search_symbols_scope(
             occurrences=[],
         ),
     )
-    found = await queries.search_symbols(session, snapshot, "", scope)
+    found = await search_symbols(session, snapshot, "", scope)
     names = [row.qualified_name for row in found]
     assert names == expected, f"scope {scope} should list {expected}, got {names}"
