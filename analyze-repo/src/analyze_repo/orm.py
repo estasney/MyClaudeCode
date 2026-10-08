@@ -5,6 +5,7 @@ from sqlalchemy import (
     DateTime,
     ForeignKey,
     Integer,
+    LargeBinary,
     MetaData,
     Text,
     UniqueConstraint,
@@ -16,10 +17,13 @@ from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
 __all__ = [
     "Base",
+    "Decorator",
+    "Embedding",
     "File",
     "Language",
     "Occurrence",
     "Repo",
+    "SearchDocument",
     "Snapshot",
     "Summary",
     "Symbol",
@@ -33,13 +37,15 @@ class Language(StrEnum):
 
 
 class SymbolKind(StrEnum):
-    """The kinds basedpyright's symbol indexer emits, read from lspUtils.ts."""
+    """The kinds basedpyright's symbol indexer emits, read from lspUtils.ts.
+    A parameter is a variable that tree-sitter finds in a parameter list."""
 
     class_ = "class"
     function = "function"
     method = "method"
     variable = "variable"
     constant = "constant"
+    parameter = "parameter"
 
 
 def enum_values(members: type[StrEnum]) -> list[str]:
@@ -143,6 +149,12 @@ class Symbol(Base):
         cascade="all, delete-orphan",
         passive_deletes=True,
     )
+    decorators: Mapped[list["Decorator"]] = relationship(
+        back_populates="symbol",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
+        order_by="Decorator.id",
+    )
 
 
 class Occurrence(Base):
@@ -191,6 +203,58 @@ class Summary(Base):
     text: Mapped[str] = mapped_column(Text, nullable=False)
     model: Mapped[str] = mapped_column(
         Text, nullable=False, comment="model id that wrote it"
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+
+class Decorator(Base):
+    __tablename__ = "decorators"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    symbol_id: Mapped[int] = mapped_column(
+        Integer,
+        ForeignKey("symbols.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    expression: Mapped[str] = mapped_column(
+        Text, nullable=False, comment="decorator source without the at sign"
+    )
+
+    symbol: Mapped[Symbol] = relationship(back_populates="decorators")
+
+
+class SearchDocument(Base):
+    __tablename__ = "search_documents"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    symbol_id: Mapped[int] = mapped_column(
+        Integer,
+        ForeignKey("symbols.id", ondelete="CASCADE"),
+        nullable=False,
+        unique=True,
+    )
+    text: Mapped[str] = mapped_column(Text, nullable=False)
+    text_hash: Mapped[str] = mapped_column(
+        Text, nullable=False, index=True, comment="matches Embedding.text_hash"
+    )
+
+    symbol: Mapped[Symbol] = relationship()
+
+
+class Embedding(Base):
+    __tablename__ = "embeddings"
+
+    text_hash: Mapped[str] = mapped_column(
+        Text, primary_key=True, comment="matches SearchDocument.text_hash"
+    )
+    model: Mapped[str] = mapped_column(
+        Text, primary_key=True, comment="embedding model id"
+    )
+    vector: Mapped[bytes] = mapped_column(
+        LargeBinary, nullable=False, comment="unit length float32 values"
     )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()

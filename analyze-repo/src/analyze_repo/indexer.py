@@ -34,6 +34,7 @@ class IndexedSymbol:
     range: lsp.Range
     selection_start: lsp.Position
     body_hash: str
+    decorators: tuple[str, ...]
 
 
 @dataclass(frozen=True)
@@ -81,7 +82,7 @@ def hash_lines(lines: Sequence[bytes], range: lsp.Range) -> str:
 def collect_symbols(
     path: Path,
     document_symbols: Iterable[lsp.DocumentSymbol],
-    lines: Sequence[bytes],
+    tree: PythonSyntaxTree,
     parent: IndexedSymbol | None,
 ) -> Iterator[IndexedSymbol]:
     """Walks the symbol tree depth first; each symbol records its enclosing one."""
@@ -90,6 +91,9 @@ def collect_symbols(
         kind = to_symbol_kind(document_symbol.kind)
         if kind is None:
             continue
+        selection_start = document_symbol.selection_range.start
+        if kind is orm.SymbolKind.variable and tree.is_parameter(selection_start):
+            kind = orm.SymbolKind.parameter
         symbol = IndexedSymbol(
             path=path,
             parent=parent,
@@ -97,11 +101,12 @@ def collect_symbols(
             name=document_symbol.name,
             kind=kind,
             range=document_symbol.range,
-            selection_start=document_symbol.selection_range.start,
-            body_hash=hash_lines(lines, document_symbol.range),
+            selection_start=selection_start,
+            body_hash=hash_lines(tree.lines, document_symbol.range),
+            decorators=tuple(tree.list_decorators(selection_start)),
         )
         yield symbol
-        yield from collect_symbols(path, document_symbol.children, lines, symbol)
+        yield from collect_symbols(path, document_symbol.children, tree, symbol)
 
 
 def contains(range: lsp.Range, position: lsp.Position) -> bool:
@@ -151,9 +156,7 @@ def index_repo(server: LanguageServer, absolute_paths: Sequence[Path]) -> RepoIn
     sources = {path: path.read_bytes() for path in absolute_paths}
     trees = {path: PythonSyntaxTree(source) for path, source in sources.items()}
     symbols_by_path = {
-        path: list(
-            collect_symbols(path, server.get_document_symbols(path), tree.lines, None)
-        )
+        path: list(collect_symbols(path, server.get_document_symbols(path), tree, None))
         for path, tree in trees.items()
     }
     symbols = [symbol for group in symbols_by_path.values() for symbol in group]
@@ -212,6 +215,9 @@ async def persist_index(
             start_line=symbol.range.start.line,
             end_line=symbol.range.end.line,
             body_hash=symbol.body_hash,
+            decorators=[
+                orm.Decorator(expression=expression) for expression in symbol.decorators
+            ],
         )
     session.add_all(files.values())
     session.add_all(rows.values())

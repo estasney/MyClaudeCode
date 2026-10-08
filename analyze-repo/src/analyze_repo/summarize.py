@@ -10,6 +10,7 @@ from sqlalchemy.orm import selectinload
 from analyze_repo import orm
 
 __all__ = [
+    "body_text",
     "summarize_snapshot",
 ]
 

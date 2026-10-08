@@ -5,6 +5,7 @@ import pytest
 from analyze_repo import orm
 from analyze_repo.indexer import collect_symbols, find_enclosing_symbol
 from analyze_repo.lsp import models as lsp
+from analyze_repo.syntax import PythonSyntaxTree
 
 
 def document_symbol(
@@ -13,13 +14,19 @@ def document_symbol(
     start_line: int,
     end_line: int,
     children: list[lsp.DocumentSymbol],
+    selection_character: int = 0,
 ) -> lsp.DocumentSymbol:
     span = lsp.Range(
         start=lsp.Position(line=start_line, character=0),
         end=lsp.Position(line=end_line, character=0),
     )
+    name_start = lsp.Position(line=start_line, character=selection_character)
     return lsp.DocumentSymbol(
-        name=name, kind=kind, range=span, selection_range=span, children=children
+        name=name,
+        kind=kind,
+        range=span,
+        selection_range=lsp.Range(start=name_start, end=name_start),
+        children=children,
     )
 
 
@@ -53,14 +60,14 @@ def document_symbol(
                     0,
                     3,
                     [
-                        document_symbol("self", lsp.SymbolKind.variable, 0, 0, []),
+                        document_symbol("total", lsp.SymbolKind.variable, 1, 1, []),
                         document_symbol("retry", lsp.SymbolKind.function, 1, 2, []),
                     ],
                 )
             ],
             [
                 ("connect", orm.SymbolKind.function, None),
-                ("connect.self", orm.SymbolKind.variable, "connect"),
+                ("connect.total", orm.SymbolKind.variable, "connect"),
                 ("connect.retry", orm.SymbolKind.function, "connect"),
             ],
         ),
@@ -70,7 +77,7 @@ def document_symbol(
     ids=[
         "class",
         "class attribute",
-        "function parameter and nested function",
+        "function variable and nested function",
         "import alias dropped",
         "type parameter dropped",
     ],
@@ -88,9 +95,47 @@ def test_collect_symbols(
             symbol.kind,
             None if symbol.parent is None else symbol.parent.qualified_name,
         )
-        for symbol in collect_symbols(Path("m.py"), tree, [b""] * 4, None)
+        for symbol in collect_symbols(
+            Path("m.py"), tree, PythonSyntaxTree(b"\n" * 3), None
+        )
     ]
     assert result == expected, f"tree {tree} should collect as {expected}, got {result}"
+
+
+def test_collect_symbols_reads_parameters_and_decorators() -> None:
+    """Arrange: a decorated function with two parameters and a local variable.
+    Act: collect its symbols against the parsed source.
+    Assert: parameters are told apart from the local and the decorator is kept."""
+    source = b"@tool\ndef connect(self, retries=3):\n    total = retries\n"
+    tree = [
+        document_symbol(
+            "connect",
+            lsp.SymbolKind.function,
+            1,
+            2,
+            [
+                document_symbol("self", lsp.SymbolKind.variable, 1, 1, [], 12),
+                document_symbol("retries", lsp.SymbolKind.variable, 1, 1, [], 18),
+                document_symbol("total", lsp.SymbolKind.variable, 2, 2, [], 4),
+            ],
+            4,
+        )
+    ]
+    result = [
+        (symbol.qualified_name, symbol.kind, symbol.decorators)
+        for symbol in collect_symbols(
+            Path("m.py"), tree, PythonSyntaxTree(source), None
+        )
+    ]
+    expected = [
+        ("connect", orm.SymbolKind.function, ("tool",)),
+        ("connect.self", orm.SymbolKind.parameter, ()),
+        ("connect.retries", orm.SymbolKind.parameter, ()),
+        ("connect.total", orm.SymbolKind.variable, ()),
+    ]
+    assert result == expected, (
+        f"source {source!r} should collect as {expected}, got {result}"
+    )
 
 
 @pytest.mark.parametrize(
@@ -133,7 +178,9 @@ def test_find_enclosing_symbol(
     """Arrange: collected symbols whose ranges may nest.
     Act: look up the enclosing symbol at a position.
     Assert: the innermost containing range is returned, or None outside every range."""
-    symbols = list(collect_symbols(Path("m.py"), tree, [b""] * 6, None))
+    symbols = list(
+        collect_symbols(Path("m.py"), tree, PythonSyntaxTree(b"\n" * 5), None)
+    )
     found = find_enclosing_symbol(symbols, position)
     name = None if found is None else found.qualified_name
     assert name == expected, f"{position} should sit inside {expected}, got {name}"

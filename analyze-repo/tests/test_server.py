@@ -1,18 +1,38 @@
+import hashlib
 import sys
 import venv
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Sequence
 from pathlib import Path
 from textwrap import dedent
 
+import numpy as np
 import pytest
 import pytest_asyncio
 from fastmcp import Client
 from fastmcp.client.transports import FastMCPTransport
+from fastmcp.exceptions import ToolError
+from numpy.typing import NDArray
 
 from analyze_repo.db import run_migrations
+from analyze_repo.documents import split_words
 from analyze_repo.queries import SymbolScope
 from analyze_repo.server import build_server
 from analyze_repo.settings import Settings
+
+
+class WordHashEmbedder:
+    """Hashes each word onto one of a few dimensions so tests load no model."""
+
+    model = "word-hash"
+
+    def embed_documents(self, texts: Sequence[str]) -> NDArray[np.float32]:
+        return np.stack([self.embed_query(text) for text in texts])
+
+    def embed_query(self, text: str) -> NDArray[np.float32]:
+        vector = np.zeros(64, dtype=np.float32)
+        for word in split_words(text):
+            vector[int(hashlib.sha256(word.encode()).hexdigest(), 16) % 64] += 1
+        return vector / np.linalg.norm(vector)
 
 
 @pytest_asyncio.fixture
@@ -20,7 +40,7 @@ async def client(tmp_path: Path) -> AsyncIterator[Client[FastMCPTransport]]:
     """The server as `main` builds it, over the in-memory transport."""
     settings = Settings(data_dir=tmp_path / "data")
     run_migrations(settings.db_path)
-    async with Client(build_server(settings)) as client:
+    async with Client(build_server(settings, WordHashEmbedder())) as client:
         yield client
 
 
@@ -201,3 +221,102 @@ async def test_index_repository_discovers_the_venv_under_the_root(
     )
     names = [row.qualified_name for row in found.data]
     assert names == ["helper"], f"discovered indexing should find helper, got {names}"
+
+
+@pytest.mark.parametrize(
+    "working_tree",
+    [
+        {
+            "spaces.py": dedent("""\
+                def tool(function):
+                    return function
+
+
+                class Client:
+                    def create_space(self, name: str, batch_size: int) -> None:
+                        pass
+
+
+                @tool
+                def create_space(name: str, batch_size: int = 32) -> None:
+                    Client().create_space(name, batch_size)
+
+
+                def delete_entries(ids: list[str]) -> None:
+                    pass
+                """),
+        },
+    ],
+    indirect=True,
+    ids=["tool over a client method"],
+)
+@pytest.mark.asyncio
+async def test_search_code_answers_with_the_owner_and_its_entry_point(
+    client: Client[FastMCPTransport], working_tree: Path
+) -> None:
+    """Arrange: a decorated tool that forwards its batch size to a client method.
+    Act: index and embed the tree then ask how to set the batch size of a space.
+    Assert: both functions lead under their batch size parameter and the client
+    method is reached from the decorated tool."""
+    indexed = await client.call_tool(
+        "index_repository",
+        {
+            "repo_root": str(working_tree),
+            "toolchain_overrides": {"python": sys.executable},
+        },
+    )
+    snapshot_id = indexed.data.snapshot_id
+    await client.call_tool("embed_repository", {"snapshot_id": snapshot_id})
+    found = await client.call_tool(
+        "search_code",
+        {
+            "snapshot_id": snapshot_id,
+            "question": "How do I set the batch size of a space?",
+            "limit": 2,
+        },
+    )
+    hits = {hit.symbol.qualified_name: hit for hit in found.data}
+    assert set(hits) == {"create_space", "Client.create_space"}, (
+        f"the two batch size owners should lead, got {list(hits)}"
+    )
+    parameters = [
+        parameter.qualified_name
+        for parameter in hits["Client.create_space"].matched_parameters
+    ]
+    assert "Client.create_space.batch_size" in parameters, (
+        f"the batch size parameter should match under its method, got {parameters}"
+    )
+    entry_points = [
+        (entry.qualified_name, entry.decorators)
+        for entry in hits["Client.create_space"].entry_points
+    ]
+    assert entry_points == [("create_space", ["tool"])], (
+        f"the client method should be reached from the tool, got {entry_points}"
+    )
+
+
+@pytest.mark.parametrize(
+    "working_tree",
+    [{"lib.py": "def helper() -> int:\n    return 1\n"}],
+    indirect=True,
+    ids=["one module"],
+)
+@pytest.mark.asyncio
+async def test_search_code_requires_embed_repository(
+    client: Client[FastMCPTransport], working_tree: Path
+) -> None:
+    """Arrange: an indexed working tree that was not embedded.
+    Act: search it.
+    Assert: the tool fails and names the step that was skipped."""
+    indexed = await client.call_tool(
+        "index_repository",
+        {
+            "repo_root": str(working_tree),
+            "toolchain_overrides": {"python": sys.executable},
+        },
+    )
+    with pytest.raises(ToolError, match="embed_repository"):
+        await client.call_tool(
+            "search_code",
+            {"snapshot_id": indexed.data.snapshot_id, "question": "helper"},
+        )

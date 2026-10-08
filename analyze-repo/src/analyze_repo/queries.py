@@ -15,11 +15,14 @@ __all__ = [
     "SymbolScope",
     "get_snapshot",
     "get_symbol",
+    "is_call_site",
     "list_callees",
     "list_callers",
     "list_references",
     "search_symbols",
     "snapshot_info",
+    "symbol_info",
+    "symbols_with_summaries",
 ]
 
 
@@ -40,6 +43,7 @@ class SymbolInfo(BaseModel):
     start_line: int
     end_line: int
     summary: str | None
+    decorators: Sequence[str]
 
 
 class ReferenceInfo(BaseModel):
@@ -71,6 +75,7 @@ def symbol_info(symbol: orm.Symbol, summary: orm.Summary | None) -> SymbolInfo:
         start_line=symbol.start_line,
         end_line=symbol.end_line,
         summary=None if summary is None else summary.text,
+        decorators=[decorator.expression for decorator in symbol.decorators],
     )
 
 
@@ -81,7 +86,7 @@ def symbols_with_summaries() -> Select[tuple[orm.Symbol, orm.Summary]]:
         select(orm.Symbol, orm.Summary)
         .join(orm.File)
         .outerjoin(orm.Summary, orm.Summary.body_hash == orm.Symbol.body_hash)
-        .options(selectinload(orm.Symbol.file))
+        .options(selectinload(orm.Symbol.file), selectinload(orm.Symbol.decorators))
     )
 
 

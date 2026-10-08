@@ -4,13 +4,15 @@ from pathlib import Path
 from fastmcp import FastMCP
 from sqlalchemy.ext.asyncio import async_sessionmaker
 
-from analyze_repo import pipeline, queries, summarize
+from analyze_repo import documents, pipeline, queries, search, summarize
 from analyze_repo.db import create_index_engine, run_migrations
+from analyze_repo.embedding import Embedder, SentenceTransformerEmbedder
 from analyze_repo.indexer import PythonIndexer
 from analyze_repo.interpreter import PythonToolchainDiscovery, platform_venv_layout
 from analyze_repo.orm import Language
 from analyze_repo.pipeline import IndexerRegistration
 from analyze_repo.queries import ReferenceInfo, SnapshotInfo, SymbolInfo, SymbolScope
+from analyze_repo.search import SearchHit
 from analyze_repo.settings import Settings, get_settings
 
 __all__ = [
@@ -31,7 +33,7 @@ def indexer_registry() -> Mapping[str, IndexerRegistration]:
     }
 
 
-def build_server(settings: Settings) -> FastMCP:
+def build_server(settings: Settings, embedder: Embedder) -> FastMCP:
     server = FastMCP("analyze-repo")
     new_session = async_sessionmaker(create_index_engine(settings))
     registry = indexer_registry()
@@ -65,6 +67,32 @@ def build_server(settings: Settings) -> FastMCP:
                 repo_root,
                 settings.summary_model,
                 settings.summary_concurrency,
+            )
+
+    @server.tool
+    async def embed_repository(snapshot_id: int) -> int:
+        """Write a search document for every class, function, method, parameter,
+        and module or class level variable in the snapshot, then embed each
+        document text that has no vector yet; returns how many were embedded."""
+        async with new_session.begin() as session:
+            snapshot = await queries.get_snapshot(session, snapshot_id)
+            repo_root = Path((await snapshot.awaitable_attrs.repo).location)
+            return await documents.embed_snapshot(
+                session, snapshot, repo_root, embedder
+            )
+
+    @server.tool
+    async def search_code(
+        snapshot_id: int, question: str, limit: int = 10
+    ) -> Sequence[SearchHit]:
+        """Symbols relevant to a natural language question, ranked by keyword and
+        embedding similarity. A parameter that matches is listed under the function
+        that declares it. Entry points are the callers reached from the symbol that
+        nothing calls in turn, or the symbol itself when nothing calls it."""
+        async with new_session() as session:
+            snapshot = await queries.get_snapshot(session, snapshot_id)
+            return await search.search_code(
+                session, snapshot, question, embedder, settings, limit
             )
 
     @server.tool
@@ -107,4 +135,4 @@ def build_server(settings: Settings) -> FastMCP:
 def main() -> None:
     settings = get_settings()
     run_migrations(settings.db_path)
-    build_server(settings).run(transport="stdio")
+    build_server(settings, SentenceTransformerEmbedder(settings)).run(transport="stdio")

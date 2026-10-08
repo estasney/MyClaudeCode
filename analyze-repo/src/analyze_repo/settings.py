@@ -25,6 +25,20 @@ class Settings(BaseSettings):
     summary_concurrency: int = Field(
         default=4, description="Summary requests in flight at once."
     )
+    embedding_model: str = Field(
+        default="sentence-transformers/multi-qa-mpnet-base-cos-v1",
+        description="sentence-transformers model id that embeds search documents and questions.",
+    )
+    embedding_batch_size: int = Field(
+        default=32, description="Search documents per embedding batch."
+    )
+    caller_depth: int = Field(
+        default=5,
+        description="Caller hops a search walks from each hit toward entry points.",
+    )
+    entry_point_limit: int = Field(
+        default=5, description="Entry points listed per search hit."
+    )
 
     @property
     def db_path(self) -> Path:

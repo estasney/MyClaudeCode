@@ -108,3 +108,61 @@ def test_context_at(source: str, position: Position, expected: SyntaxContext) ->
     Assert: node kind, parent kind, and parent field match the grammar."""
     result = PythonSyntaxTree(source.encode("utf-8")).context_at(position)
     assert result == expected, f"{position} in {source!r} is {expected}, got {result}"
+
+
+@pytest.mark.parametrize(
+    ("source", "position", "expected"),
+    [
+        ("def f(a): pass", Position(line=0, character=6), True),
+        ("def f(a: int): pass", Position(line=0, character=6), True),
+        ("def f(a: int = 1): pass", Position(line=0, character=6), True),
+        ("def f(*args): pass", Position(line=0, character=7), True),
+        ("def f():\n    a = 1", Position(line=1, character=4), False),
+        ("class A:\n    a: int = 1", Position(line=1, character=4), False),
+        ("a = 1", Position(line=0, character=0), False),
+    ],
+    ids=[
+        "bare parameter",
+        "typed parameter",
+        "typed parameter with default",
+        "star parameter",
+        "local variable",
+        "class attribute",
+        "module variable",
+    ],
+)
+def test_is_parameter(source: str, position: Position, *, expected: bool) -> None:
+    """Arrange: a parsed Python source and the position of a declared name.
+    Act: ask whether the name is a parameter.
+    Assert: only names inside a parameter list are parameters."""
+    result = PythonSyntaxTree(source.encode("utf-8")).is_parameter(position)
+    assert result == expected, f"{position} in {source!r} is_parameter {expected}"
+
+
+@pytest.mark.parametrize(
+    ("source", "position", "expected"),
+    [
+        ("def f(): pass", Position(line=0, character=4), []),
+        ("@tool\ndef f(): pass", Position(line=1, character=4), ["tool"]),
+        (
+            "@server.tool(name='x')\n@cache\nasync def f(): pass",
+            Position(line=2, character=10),
+            ["server.tool(name='x')", "cache"],
+        ),
+        ("@dataclass\nclass A: pass", Position(line=1, character=6), ["dataclass"]),
+        ("@tool\ndef f(a): pass", Position(line=1, character=6), []),
+    ],
+    ids=[
+        "undecorated",
+        "one decorator",
+        "decorators in source order",
+        "decorated class",
+        "parameter of a decorated function",
+    ],
+)
+def test_list_decorators(source: str, position: Position, expected: list[str]) -> None:
+    """Arrange: a parsed Python source and the position of a definition name.
+    Act: list the decorators of that definition.
+    Assert: decorator expressions come back in source order without the at sign."""
+    result = PythonSyntaxTree(source.encode("utf-8")).list_decorators(position)
+    assert result == expected, f"{position} in {source!r} has {expected}, got {result}"
