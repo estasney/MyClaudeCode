@@ -1,0 +1,11 @@
+{
+  "$schema": "https://anthropic.com/claude-code/plugin.schema.json",
+  "name": "task-board",
+  "version": "0.1.0",
+  "description": "A pane over the session's task list that both the person and Claude edit",
+  "author": {
+    "name": "estasney",
+    "email": "estasney@users.noreply.github.com"
+  },
+  "types": "./types/index.d.ts"
+}
