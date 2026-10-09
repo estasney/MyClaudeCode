@@ -18,6 +18,11 @@ export type Draft = { edits: Record<string, TaskEdit>; added: NewTask[] }
 
 declare module 'claude-code' {
   interface PluginState {
-    'task-board': { tasks: Task[]; draft: Draft; editingId: string | null }
+    'task-board': {
+      tasks: Task[]
+      draft: Draft
+      editingId: string | null
+      focusedKey: string | null
+    }
   }
 }

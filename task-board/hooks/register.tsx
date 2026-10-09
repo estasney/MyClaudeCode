@@ -7,6 +7,7 @@ const PANE = 'task-board'
 const tasks = atom({ plugin: 'task-board', key: 'tasks' } as const, [])
 const draft = atom({ plugin: 'task-board', key: 'draft' } as const, { edits: {}, added: [] })
 const editingId = atom({ plugin: 'task-board', key: 'editingId' } as const, null)
+const focusedKey = atom({ plugin: 'task-board', key: 'focusedKey' } as const, null)
 
 const statusMark: Record<TaskStatus, string> = {
   pending: '[ ]',
@@ -20,7 +21,6 @@ const statusAfter: Record<TaskStatus, TaskStatus> = {
   completed: 'pending',
 }
 
-// One line of the board: a saved task with the person's edits laid over it, or a task added in the pane.
 type BoardRow = {
   source: { kind: 'saved'; id: string } | { kind: 'new'; draftId: string }
   key: string
@@ -185,6 +185,17 @@ export const register: Register = on => {
     return next(e)
   }).catch(($, e, next) => next(e))
 
+  // The hotkey buttons join the ring like any Button, so the ring wraps past them.
+  on('ui.focus', { component: 'Pane', requestId: PANE }, async ($, e, next) => {
+    const element = e.element === 'edit' ? 'new' : e.element === 'delete' ? 'close' : e.element
+    const moved = await next({ ...e, element })
+    if (moved.deny === undefined) {
+      await update($, focusedKey, () => element ?? null)
+    }
+
+    return moved
+  }).catch(($, e, next) => next(e))
+
   on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e) => {
     if (e.surface === 'mobile') {
       const { Text } = $.ui.resolve(e)
@@ -198,6 +209,8 @@ export const register: Register = on => {
     // While the prompt has the keyboard the board is a dimmed, read-only list.
     const isActive = e.props.isFocused
     const editing = isActive ? await read($, editingId) : null
+    const focused = isActive ? await read($, focusedKey) : null
+    const focusedRow = rows.find(row => `task-${row.key}` === focused)
     const doneCount = rows.filter(row => row.status === 'completed').length
     const unsavedCount = Object.keys(pending.edits).length + pending.added.length
     const labelWidth = Math.max(3, ...rows.map(row => row.label.length))
@@ -225,6 +238,7 @@ export const register: Register = on => {
               label="+ "
               placeholder="New task"
               value=""
+              autoFocus={editing === null ? true : undefined}
               submitLabel="add"
               onSubmit={async subject => {
                 if (subject.trim() !== '') {
@@ -243,91 +257,72 @@ export const register: Register = on => {
           </Box>
         )}
         {rows.length === 0 && <Text dimColor>No tasks yet.</Text>}
-        {rows.map(row => (
-          <Box key={`row-${row.key}`} columnGap={1}>
-            <Box width={3} flexShrink={0}>
-              {isActive ? (
-                <Button
-                  key={`status-${row.key}`}
-                  plain
-                  dimColor={row.status === 'completed'}
-                  label={statusMark[row.status]}
-                  onPress={() =>
-                    update($, draft, current =>
-                      editRow(current, row, { status: statusAfter[row.status] }),
-                    )
-                  }
-                />
+        {rows.map(row =>
+          isActive && row.key !== editing ? (
+            <Button
+              key={`task-${row.key}`}
+              plain
+              onPress={() =>
+                update($, draft, current =>
+                  editRow(current, row, { status: statusAfter[row.status] }),
+                )
+              }
+            >
+              <Text dimColor>{`${statusMark[row.status]} ${row.label.padEnd(labelWidth)} `}</Text>
+              <Text
+                bold={row.status === 'in_progress'}
+                italic={row.isEdited}
+                dimColor={row.status === 'completed'}
+                strikethrough={row.status === 'completed'}
+              >
+                {row.subject}
+              </Text>
+              {row.blockedBy.length > 0 && (
+                <Text color="warning">
+                  {` blocked by ${row.blockedBy.map(id => `#${id}`).join(', ')}`}
+                </Text>
+              )}
+            </Button>
+          ) : (
+            <Box key={`row-${row.key}`} columnGap={1}>
+              <Text dimColor>{statusMark[row.status]}</Text>
+              <Box width={labelWidth} flexShrink={0}>
+                <Text dimColor>{row.label}</Text>
+              </Box>
+              {row.key === editing ? (
+                <>
+                  <Box flexGrow={1} flexShrink={1} minWidth={0}>
+                    <Input
+                      key={`subject-${row.key}`}
+                      value={row.subject}
+                      autoFocus
+                      submitLabel="keep"
+                      onSubmit={async subject => {
+                        await update($, draft, current => editRow(current, row, { subject }))
+                        await update($, editingId, () => null)
+                      }}
+                    />
+                  </Box>
+                  <Box flexShrink={0} marginLeft={2}>
+                    <Button
+                      key={`cancel-${row.key}`}
+                      plain
+                      dimColor
+                      label="cancel"
+                      onPress={() => update($, editingId, () => null)}
+                    />
+                  </Box>
+                </>
               ) : (
-                <Text dimColor>{statusMark[row.status]}</Text>
+                <Text dimColor strikethrough={row.status === 'completed'}>
+                  {row.subject}
+                  {row.blockedBy.length > 0 &&
+                    ` blocked by ${row.blockedBy.map(id => `#${id}`).join(', ')}`}
+                </Text>
               )}
             </Box>
-            <Box width={labelWidth} flexShrink={0}>
-              <Text dimColor>{row.label}</Text>
-            </Box>
-            {row.key === editing ? (
-              <>
-                <Box flexGrow={1} flexShrink={1} minWidth={0}>
-                  <Input
-                    key={`subject-${row.key}`}
-                    value={row.subject}
-                    autoFocus
-                    submitLabel="keep"
-                    onSubmit={async subject => {
-                      await update($, draft, current => editRow(current, row, { subject }))
-                      await update($, editingId, () => null)
-                    }}
-                  />
-                </Box>
-                <Box flexShrink={0} marginLeft={2}>
-                  <Button
-                    key={`cancel-${row.key}`}
-                    plain
-                    dimColor
-                    label="cancel"
-                    onPress={() => update($, editingId, () => null)}
-                  />
-                </Box>
-              </>
-            ) : (
-              <Box flexGrow={1} flexShrink={1} flexDirection="column">
-                <Text
-                  bold={row.status === 'in_progress'}
-                  italic={row.isEdited}
-                  dimColor={!isActive || row.status === 'completed'}
-                  strikethrough={row.status === 'completed'}
-                >
-                  {row.subject}
-                </Text>
-                {row.blockedBy.length > 0 && (
-                  <Text color="warning" dimColor={!isActive}>
-                    blocked by {row.blockedBy.map(id => `#${id}`).join(', ')}
-                  </Text>
-                )}
-              </Box>
-            )}
-            {isActive && row.key !== editing && (
-              <Box flexShrink={0} columnGap={2} marginLeft={2}>
-                <Button
-                  key={`edit-${row.key}`}
-                  plain
-                  dimColor
-                  label="edit"
-                  onPress={() => update($, editingId, () => row.key)}
-                />
-                <Button
-                  key={`delete-${row.key}`}
-                  plain
-                  dimColor
-                  label="delete"
-                  onPress={() =>
-                    update($, draft, current => editRow(current, row, { status: 'deleted' }))
-                  }
-                />
-              </Box>
-            )}
-          </Box>
-        ))}
+          ),
+        )}
         {!isActive && (
           <Box marginTop={1}>
             <Text dimColor>Ctrl+X Tab to edit</Text>
@@ -335,31 +330,32 @@ export const register: Register = on => {
         )}
         {isActive && (
           <>
-            <Box marginTop={1} columnGap={2}>
+            <Box marginTop={1} flexDirection="column" alignItems="flex-start">
               <Button
                 key="save"
                 variant="primary"
-                label="save and close"
+                label="save"
                 onPress={async () => {
                   await saveDraft($)
                   await closeBoard($)
                 }}
               />
               <Button
-                key="submit"
-                label="save and send to Claude"
+                key="fill"
+                label="prompt"
                 dimColor={rows.length === 0}
                 onPress={async () => {
                   await saveDraft($)
                   const saved = await read($, tasks)
                   await closeBoard($)
                   if (saved.length === 0) {
-                    $.ui.toast('No tasks to send.')
+                    $.ui.toast('No tasks to put in the prompt.')
                     return
                   }
-                  await $.prompt.submit({
+                  const filled = await $.prompt.fill({
+                    mode: 'insert',
                     text: [
-                      'My task list from the task board:',
+                      'User updated tasks:',
                       ...saved.map(
                         task =>
                           `#${task.id} [${task.status}] ${task.subject}` +
@@ -369,16 +365,48 @@ export const register: Register = on => {
                       ),
                     ].join('\n'),
                   })
+                  if (!filled.isFilled) {
+                    $.ui.toast(`Prompt fill refused: ${filled.refusal ?? 'no reason given'}`)
+                  }
                 }}
               />
               <Button
                 key="close"
                 role="dismiss"
-                label={unsavedCount > 0 ? 'discard and close' : 'close'}
+                label={unsavedCount > 0 ? 'discard' : 'close'}
                 onPress={() => closeBoard($)}
               />
             </Box>
-            <Text dimColor>Tab/↑↓ move · Enter press or keep · Esc back to prompt</Text>
+            <Box columnGap={2}>
+              <Button
+                key="edit"
+                plain
+                hotkey="e"
+                label="edit"
+                dimColor={focusedRow === undefined}
+                onPress={async () => {
+                  if (focusedRow !== undefined) {
+                    await update($, editingId, () => focusedRow.key)
+                    await $.ui.focus({ requestId: PANE, key: `subject-${focusedRow.key}` })
+                  }
+                }}
+              />
+              <Button
+                key="delete"
+                plain
+                hotkey="d"
+                label="delete"
+                dimColor={focusedRow === undefined}
+                onPress={async () => {
+                  if (focusedRow !== undefined) {
+                    await update($, draft, current =>
+                      editRow(current, focusedRow, { status: 'deleted' }),
+                    )
+                  }
+                }}
+              />
+              <Text dimColor>Enter cycles status · Esc back to prompt</Text>
+            </Box>
           </>
         )}
       </Box>
