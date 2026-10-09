@@ -166,7 +166,7 @@ export const register: Register = on => {
     await syncTasks($)
     await $.ui.open({ id: PANE, title: 'Tasks', focus: true })
 
-    return { text: 'Task board opened.' }
+    return {}
   })
 
   // Claude's task changes pass here and redraw the board.
