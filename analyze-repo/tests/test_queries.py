@@ -56,6 +56,7 @@ def indexed_symbol(
         selection_start=lsp.Position(line=start_line, character=4),
         body_hash=qualified_name,
         decorators=(),
+        signature=None,
     )
 
 

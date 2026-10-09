@@ -1,7 +1,7 @@
 import asyncio
 import hashlib
 import re
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from itertools import batched
 from pathlib import Path
 from typing import assert_never
@@ -23,29 +23,29 @@ def split_words(text: str) -> list[str]:
     ]
 
 
-def document_text(symbol: orm.Symbol, detail: str | None) -> str:
+def document_text(symbol: orm.Symbol, details: Sequence[str]) -> str:
     """Identifier words lead so keyword and embedding search both see them."""
     lines = [
         " ".join(split_words(symbol.qualified_name)),
         f"{symbol.kind.value} {symbol.qualified_name} in {symbol.file.path}",
         *(f"decorated with {decorator.expression}" for decorator in symbol.decorators),
+        *details,
     ]
-    if detail is not None:
-        lines.append(detail)
     return "\n".join(lines)
 
 
-def document_detail(
+def document_details(
     repo_root: Path, symbol: orm.Symbol, summary: orm.Summary | None
-) -> str | None:
-    """Definitions are described by their summary and values by their source."""
+) -> list[str]:
+    """Definitions are described by their signature and summary and values by their source."""
     match symbol.kind:
         case orm.SymbolKind.class_ | orm.SymbolKind.function | orm.SymbolKind.method:
-            return None if summary is None else summary.text
+            details = [] if symbol.signature is None else [symbol.signature]
+            return details if summary is None else [*details, summary.text]
         case (
             orm.SymbolKind.parameter | orm.SymbolKind.variable | orm.SymbolKind.constant
         ):
-            return body_text(repo_root, symbol)
+            return [body_text(repo_root, symbol)]
         case _:
             assert_never(symbol.kind)
 
@@ -67,7 +67,7 @@ async def write_documents(
     )
     documents: list[orm.SearchDocument] = []
     for symbol, summary in await session.execute(searchable):
-        text = document_text(symbol, document_detail(repo_root, symbol, summary))
+        text = document_text(symbol, document_details(repo_root, symbol, summary))
         documents.append(
             orm.SearchDocument(
                 symbol=symbol,

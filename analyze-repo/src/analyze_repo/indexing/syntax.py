@@ -85,6 +85,17 @@ class PythonSyntaxTree:
             for expression in expressions
         ]
 
+    def get_signature(self, position: Position) -> str | None:
+        """Source of the definition named at position from its keyword to its colon."""
+        definition = self.find_node(position).parent
+        if definition is None or definition.type not in (
+            "function_definition",
+            "class_definition",
+        ):
+            return None
+        colon = next(child for child in definition.children if child.type == ":")
+        return self.source[definition.start_byte : colon.start_byte].decode("utf-8")
+
 
 __all__ = [
     "PythonSyntaxTree",

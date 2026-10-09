@@ -102,10 +102,11 @@ def test_collect_symbols(
     assert result == expected, f"tree {tree} should collect as {expected}, got {result}"
 
 
-def test_collect_symbols_reads_parameters_and_decorators() -> None:
+def test_collect_symbols_reads_parameters_decorators_and_signatures() -> None:
     """Arrange: a decorated function with two parameters and a local variable.
     Act: collect its symbols against the parsed source.
-    Assert: parameters are told apart from the local and the decorator is kept."""
+    Assert: parameters are told apart from the local and the decorator and
+    signature are kept on the function only."""
     source = b"@tool\ndef connect(self, retries=3):\n    total = retries\n"
     tree = [
         document_symbol(
@@ -122,16 +123,21 @@ def test_collect_symbols_reads_parameters_and_decorators() -> None:
         )
     ]
     result = [
-        (symbol.qualified_name, symbol.kind, symbol.decorators)
+        (symbol.qualified_name, symbol.kind, symbol.decorators, symbol.signature)
         for symbol in collect_symbols(
             Path("m.py"), tree, PythonSyntaxTree(source), None
         )
     ]
     expected = [
-        ("connect", orm.SymbolKind.function, ("tool",)),
-        ("connect.self", orm.SymbolKind.parameter, ()),
-        ("connect.retries", orm.SymbolKind.parameter, ()),
-        ("connect.total", orm.SymbolKind.variable, ()),
+        (
+            "connect",
+            orm.SymbolKind.function,
+            ("tool",),
+            "def connect(self, retries=3)",
+        ),
+        ("connect.self", orm.SymbolKind.parameter, (), None),
+        ("connect.retries", orm.SymbolKind.parameter, (), None),
+        ("connect.total", orm.SymbolKind.variable, (), None),
     ]
     assert result == expected, (
         f"source {source!r} should collect as {expected}, got {result}"

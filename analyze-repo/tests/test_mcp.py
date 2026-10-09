@@ -14,6 +14,7 @@ from fastmcp.client.transports import FastMCPTransport
 from analyze_repo.analyzer import RepoAnalyzer
 from analyze_repo.mcp import build_server
 from analyze_repo.models import SymbolScope
+from tests.fakes import ScriptedSummarizer
 
 
 @pytest_asyncio.fixture
@@ -333,6 +334,52 @@ async def test_summarize_repository_reports_the_analysis_complete(
     )
     assert summarized.data.next_step.startswith("Analysis is complete"), (
         f"the next step should report completion, got {summarized.data.next_step}"
+    )
+
+
+@pytest.mark.parametrize(
+    "working_tree",
+    [
+        {
+            "lib.py": dedent("""\
+                def first() -> int:
+                    return 1
+
+
+                def second() -> int:
+                    return 2
+                """),
+        },
+    ],
+    indirect=True,
+    ids=["two functions"],
+)
+@pytest.mark.asyncio
+async def test_get_analysis_status_reports_the_cost_of_the_summaries(
+    client: Client[FastMCPTransport],
+    summarizer: ScriptedSummarizer,
+    working_tree: Path,
+) -> None:
+    """Arrange: an indexed working tree with two functions.
+    Act: summarize it through the server and read its status.
+    Assert: the status reports the cost of both summaries."""
+    indexed = await client.call_tool(
+        "index_repository",
+        {
+            "repo_root": str(working_tree),
+            "toolchain_overrides": {"python": sys.executable},
+        },
+    )
+    await client.call_tool(
+        "summarize_repository",
+        {"snapshot_id": indexed.data.status.snapshot.snapshot_id},
+    )
+    status = await client.call_tool(
+        "get_analysis_status", {"repo_root": str(working_tree)}
+    )
+    cost = status.data.status.summary_cost_usd
+    assert cost == pytest.approx(2 * summarizer.cost_usd), (
+        f"the status should add up the cost of both summaries, got {cost}"
     )
 
 

@@ -11,11 +11,11 @@ class SnapshotInfo(BaseModel):
 
 
 class AnalysisStatus(BaseModel):
-    """What a snapshot still lacks. Each count is the work the next run would do."""
 
     snapshot: SnapshotInfo
     missing_summaries: int
     missing_vectors: int
+    summary_cost_usd: float
 
 
 class AnalysisReport(BaseModel):

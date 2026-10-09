@@ -25,6 +25,7 @@ class IndexedSymbol:
     selection_start: lsp.Position
     body_hash: str
     decorators: tuple[str, ...]
+    signature: str | None
 
 
 @dataclass(frozen=True)
@@ -94,6 +95,7 @@ def collect_symbols(
             selection_start=selection_start,
             body_hash=hash_lines(tree.lines, document_symbol.range),
             decorators=tuple(tree.list_decorators(selection_start)),
+            signature=tree.get_signature(selection_start),
         )
         yield symbol
         yield from collect_symbols(path, document_symbol.children, tree, symbol)
@@ -205,6 +207,7 @@ async def persist_index(
             start_line=symbol.range.start.line,
             end_line=symbol.range.end.line,
             body_hash=symbol.body_hash,
+            signature=symbol.signature,
             decorators=[
                 orm.Decorator(expression=expression) for expression in symbol.decorators
             ],

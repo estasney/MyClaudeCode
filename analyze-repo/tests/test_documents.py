@@ -26,9 +26,9 @@ def test_split_words(text: str, expected: list[str]) -> None:
 
 
 def test_document_text_leads_with_identifier_words() -> None:
-    """Arrange: a decorated function symbol and its summary.
+    """Arrange: a decorated function symbol, its signature and its summary.
     Act: build its search document.
-    Assert: words then kind and location then decorators then the detail."""
+    Assert: words then kind and location then decorators then the details."""
     symbol = orm.Symbol(
         qualified_name="create_space",
         name="create_space",
@@ -36,11 +36,12 @@ def test_document_text_leads_with_identifier_words() -> None:
         file=orm.File(path="tools/spaces.py", language=orm.Language.python),
         decorators=[orm.Decorator(expression="plain_tool")],
     )
-    result = document_text(symbol, "Creates a space.")
+    result = document_text(symbol, ["def create_space(name: str)", "Creates a space."])
     expected = (
         "create space\n"
         "function create_space in tools/spaces.py\n"
         "decorated with plain_tool\n"
+        "def create_space(name: str)\n"
         "Creates a space."
     )
     assert result == expected, f"document should read {expected!r}, got {result!r}"

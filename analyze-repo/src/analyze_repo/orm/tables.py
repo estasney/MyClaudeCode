@@ -3,6 +3,7 @@ from enum import StrEnum
 
 from sqlalchemy import (
     DateTime,
+    Float,
     ForeignKey,
     Integer,
     LargeBinary,
@@ -125,6 +126,7 @@ class Symbol(Base):
     start_line: Mapped[int] = mapped_column(Integer, nullable=False)
     end_line: Mapped[int] = mapped_column(Integer, nullable=False)
     body_hash: Mapped[str] = mapped_column(Text, nullable=False)
+    signature: Mapped[str | None] = mapped_column(Text)
 
     file: Mapped[File] = relationship(back_populates="symbols")
     parent: Mapped["Symbol | None"] = relationship(remote_side="Symbol.id")
@@ -189,6 +191,9 @@ class Summary(Base):
     model: Mapped[str] = mapped_column(
         Text, nullable=False, comment="model id that wrote it"
     )
+    input_tokens: Mapped[int | None] = mapped_column(Integer)
+    output_tokens: Mapped[int | None] = mapped_column(Integer)
+    cost_usd: Mapped[float | None] = mapped_column(Float)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )

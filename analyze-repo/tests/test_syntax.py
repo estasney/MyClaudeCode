@@ -166,3 +166,41 @@ def test_list_decorators(source: str, position: Position, expected: list[str]) -
     Assert: decorator expressions come back in source order without the at sign."""
     result = PythonSyntaxTree(source.encode("utf-8")).list_decorators(position)
     assert result == expected, f"{position} in {source!r} has {expected}, got {result}"
+
+
+@pytest.mark.parametrize(
+    ("source", "position", "expected"),
+    [
+        ("def f(): pass", Position(line=0, character=4), "def f()"),
+        (
+            "async def f(a: int = 1) -> int: pass",
+            Position(line=0, character=10),
+            "async def f(a: int = 1) -> int",
+        ),
+        (
+            "def f(\n    a: dict = {'k': 1},\n) -> None:\n    pass",
+            Position(line=0, character=4),
+            "def f(\n    a: dict = {'k': 1},\n) -> None",
+        ),
+        ("@tool\ndef f(): pass", Position(line=1, character=4), "def f()"),
+        ("class A(B): pass", Position(line=0, character=6), "class A(B)"),
+        ("def f(a): pass", Position(line=0, character=6), None),
+        ("a = 1", Position(line=0, character=0), None),
+    ],
+    ids=[
+        "bare function",
+        "async function with annotations",
+        "multiline parameters with a colon in a default",
+        "decorated function",
+        "class with a base",
+        "parameter",
+        "module variable",
+    ],
+)
+def test_get_signature(source: str, position: Position, expected: str | None) -> None:
+    """Arrange: a parsed Python source and the position of a declared name.
+    Act: get the signature of that name.
+    Assert: a definition's source runs from its keyword to its colon and a value
+    has none."""
+    result = PythonSyntaxTree(source.encode("utf-8")).get_signature(position)
+    assert result == expected, f"{position} in {source!r} has {expected}, got {result}"

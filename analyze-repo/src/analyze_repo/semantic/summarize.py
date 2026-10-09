@@ -40,9 +40,10 @@ def body_text(repo_root: Path, symbol: orm.Symbol) -> str:
 
 def summary_prompt(symbol: orm.Symbol, body: str) -> str:
     return (
-        f"Describe the {symbol.kind.value} `{symbol.qualified_name}` from "
-        f"`{symbol.file.path}` in at most three sentences: what it does, "
-        "what it takes, and what it returns or changes. "
+        f"Describe what the {symbol.kind.value} `{symbol.qualified_name}` from "
+        f"`{symbol.file.path}` does in at most three sentences, covering its "
+        "behavior and side effects. Leave out its parameters and return type, "
+        "which are indexed from its signature. "
         "Reply with the description only.\n\n"
         f"```python\n{body}\n```"
     )
@@ -73,10 +74,29 @@ class ClaudeSummarizer:
             match message:
                 case AssistantMessage(model=answering_model):
                     pass
-                case ResultMessage(is_error=False, result=str(text)):
-                    return orm.Summary(
-                        body_hash=symbol.body_hash, text=text, model=answering_model
+                case ResultMessage(
+                    is_error=False,
+                    result=str(text),
+                    total_cost_usd=cost_usd,
+                    model_usage=model_usage,
+                ):
+                    summary = orm.Summary(
+                        body_hash=symbol.body_hash,
+                        text=text,
+                        model=answering_model,
+                        cost_usd=cost_usd,
                     )
+                    if model_usage is not None:
+                        summary.input_tokens = sum(
+                            usage["inputTokens"]
+                            + usage["cacheReadInputTokens"]
+                            + usage["cacheCreationInputTokens"]
+                            for usage in model_usage.values()
+                        )
+                        summary.output_tokens = sum(
+                            usage["outputTokens"] for usage in model_usage.values()
+                        )
+                    return summary
                 case ResultMessage(subtype=subtype, errors=errors):
                     raise SummaryFailedError(
                         symbol.qualified_name, f"{subtype} {errors or ''}".strip()

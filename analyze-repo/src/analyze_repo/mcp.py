@@ -101,9 +101,7 @@ def build_server(analyzer: RepoAnalyzer) -> FastMCP:
 
     @server.tool
     async def get_analysis_status(repo_root: str) -> AnalysisReport:
-        """Free and read only. Report whether the working tree as it is now has
-        been indexed, how many summaries and vectors it still lacks, and the next
-        tool to call. The status is null when the tree has no snapshot."""
+        """Report the analysis status of a repo"""
         status = await analyzer.get_analysis_status(Path(repo_root))
         return AnalysisReport(status=status, next_step=describe_next_step(status))
 

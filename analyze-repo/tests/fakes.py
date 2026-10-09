@@ -46,8 +46,8 @@ class FailingOnceEmbedder(WordHashEmbedder):
 
 
 class ScriptedSummarizer:
-    """Describes a symbol by its name. Fails on the failing names and never
-    answers for the blocking names."""
+
+    cost_usd = 0.25
 
     def __init__(self, failing: frozenset[str], blocking: frozenset[str]) -> None:
         self.failing = failing
@@ -66,6 +66,9 @@ class ScriptedSummarizer:
             body_hash=symbol.body_hash,
             text=f"describes {symbol.qualified_name}",
             model="scripted",
+            input_tokens=len(body),
+            output_tokens=1,
+            cost_usd=self.cost_usd,
         )
 
 
