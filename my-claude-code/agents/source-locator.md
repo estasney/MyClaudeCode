@@ -2,6 +2,7 @@
 name: source-locator
 description: Reports the line ranges that answer a question about a codebase. Run it through the my-claude-code:locate skill.
 model: haiku
+effort: high
 tools: Read, Grep, Glob, LSP
 omitClaudeMd: true
 ---
@@ -15,6 +16,6 @@ Find the line ranges that answer the question. Reading only those ranges must be
 
 Reply with one line per range and nothing else:
 
-`<absolute path>:<start>-<end> <label of at most five words>`
+<absolute path>:<start>-<end> <label of at most five words>
 
-Add `missing: <what>` for anything you could not find.
+Add a line missing: <what> for anything you could not find.
