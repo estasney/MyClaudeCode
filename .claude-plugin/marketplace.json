@@ -18,11 +18,6 @@
       "description": "Python code intelligence: basedpyright and ruff behind a multiplexing proxy, registered as one language server. Type errors, navigation, and lint diagnostics together."
     },
     {
-      "name": "analyze-repo",
-      "source": "./analyze-repo",
-      "description": "Repository code intelligence: SCIP-indexed symbols, import and call graphs, and LLM summaries in sqlite, served over MCP."
-    },
-    {
       "name": "task-board",
       "source": "./task-board",
       "description": "A pane over the session's task list that both the person and Claude edit."
