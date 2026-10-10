@@ -16,7 +16,17 @@ class ForkedSkillResponse(BaseModel):
     agent_id: str = Field(alias="agentId")
 
 
-class HookInput(BaseModel):
+class SkillCall(BaseModel):
+    skill: str
+
+
+class SkillHookInput(BaseModel):
+    """A hook's if field cannot match a Skill call by skill name, so the script picks out locate calls itself."""
+
+    tool_input: SkillCall
+
+
+class LocateHookInput(BaseModel):
     transcript_path: Path
     tool_response: ForkedSkillResponse
 
@@ -136,7 +146,10 @@ def savings(responses: list[AssistantMessage], caller_model: str | None) -> Savi
 
 def main() -> None:
     """Stderr from a hook that exits 0 reaches only the debug log, so the user sees a message only on success."""
-    hook_input = HookInput.model_validate_json(sys.stdin.read())
+    raw_input = sys.stdin.read()
+    if SkillHookInput.model_validate_json(raw_input).tool_input.skill != "my-claude-code:locate":
+        return
+    hook_input = LocateHookInput.model_validate_json(raw_input)
     agent_transcript_path = (
         hook_input.transcript_path.with_suffix("")
         / "subagents"
