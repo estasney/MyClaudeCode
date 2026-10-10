@@ -1,11 +1,12 @@
 {
   "hooks": {
-    "SubagentStop": [
+    "PostToolUse": [
       {
-        "matcher": "^my-claude-code:source-locator$",
+        "matcher": "Skill",
         "hooks": [
           {
             "type": "command",
+            "if": "Skill(my-claude-code:locate *)",
             "command": "uv run --script \"${CLAUDE_PLUGIN_ROOT}/scripts/report_locate_savings.py\""
           }
         ]

@@ -2,19 +2,23 @@
 # requires-python = ">=3.12"
 # dependencies = ["pydantic>=2"]
 # ///
-"""SubagentStop hook that shows the user what a locate search saved against the same tokens on the calling model."""
+"""PostToolUse hook on the locate skill that shows the user what its search saved against the same tokens on the calling model."""
 
 import json
 import sys
 from pathlib import Path
 from typing import Literal, assert_never
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
+
+
+class ForkedSkillResponse(BaseModel):
+    agent_id: str = Field(alias="agentId")
 
 
 class HookInput(BaseModel):
     transcript_path: Path
-    agent_transcript_path: Path
+    tool_response: ForkedSkillResponse
 
 
 class CacheCreation(BaseModel):
@@ -133,7 +137,12 @@ def savings(responses: list[AssistantMessage], caller_model: str | None) -> Savi
 def main() -> None:
     """Stderr from a hook that exits 0 reaches only the debug log, so the user sees a message only on success."""
     hook_input = HookInput.model_validate_json(sys.stdin.read())
-    responses = api_responses(hook_input.agent_transcript_path.read_text())
+    agent_transcript_path = (
+        hook_input.transcript_path.with_suffix("")
+        / "subagents"
+        / f"agent-{hook_input.tool_response.agent_id}.jsonl"
+    )
+    responses = api_responses(agent_transcript_path.read_text())
     caller_model = latest_model(hook_input.transcript_path.read_text())
     match savings(responses, caller_model):
         case Savings(dollars=dollars):
