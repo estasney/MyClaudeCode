@@ -1,5 +1,16 @@
 {
   "hooks": {
+    "SubagentStop": [
+      {
+        "matcher": "^my-claude-code:source-locator$",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "uv run --script \"${CLAUDE_PLUGIN_ROOT}/scripts/report_locate_savings.py\""
+          }
+        ]
+      }
+    ],
     "PermissionRequest": [
       {
         "matcher": "Write",
