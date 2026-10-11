@@ -2,10 +2,13 @@
 # requires-python = ">=3.12"
 # dependencies = ["pydantic>=2"]
 # ///
-"""PostToolUse hook on the locate skill that shows the user what its search saved against the same tokens on the calling model."""
+"""PostToolUse hook on the locate skill that shows the user what its search saved against the calling model searching in the main session, and logs the run."""
 
 import json
+import os
+import re
 import sys
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Literal, assert_never
 
@@ -14,6 +17,7 @@ from pydantic import BaseModel, Field
 
 class ForkedSkillResponse(BaseModel):
     agent_id: str = Field(alias="agentId")
+    result: str
 
 
 class SkillCall(BaseModel):
@@ -44,10 +48,15 @@ class Usage(BaseModel):
     cache_creation: CacheCreation
 
 
+class ContentBlock(BaseModel):
+    type: str
+
+
 class AssistantMessage(BaseModel):
     id: str
     model: str
     usage: Usage
+    content: list[ContentBlock]
 
 
 class AssistantEntry(BaseModel):
@@ -55,8 +64,25 @@ class AssistantEntry(BaseModel):
     message: AssistantMessage
 
 
-class Savings(BaseModel):
-    dollars: float
+class Tokens(BaseModel):
+    input: int
+    cache_write: int
+    cache_read: int
+    output: int
+
+
+class LocateRun(BaseModel):
+    """Cost and savings are in dollars. The two savings bound how long the search output would have stayed in the main context."""
+
+    at: datetime
+    locate_model: str
+    calling_model: str
+    calling_context_tokens: int
+    tool_calls: int
+    tokens: Tokens
+    cost: float
+    savings_if_session_ends: float
+    savings_at_200k: float
 
 
 class SavingsUnknown(BaseModel):
@@ -98,23 +124,13 @@ def cost(usage: Usage, rates: Rates) -> float:
     ) / 1_000_000
 
 
-def api_responses(transcript: str) -> list[AssistantMessage]:
-    """Claude Code writes one line per content block, so only the last line of each response holds its final usage."""
-    by_id: dict[str, AssistantMessage] = {}
-    for line in transcript.splitlines():
-        entry = json.loads(line)
-        if entry.get("type") == "assistant" and entry["message"]["model"] != "<synthetic>":
-            message = AssistantEntry.model_validate(entry).message
-            by_id[message.id] = message
-    return list(by_id.values())
-
-
-def latest_model(transcript: str) -> str | None:
-    for line in reversed(transcript.splitlines()):
-        entry = json.loads(line)
-        if entry.get("type") == "assistant" and entry["message"]["model"] != "<synthetic>":
-            return entry["message"]["model"]
-    return None
+def assistant_messages(transcript: str) -> list[AssistantMessage]:
+    """Claude Code writes one line per content block, each repeating its response's id and usage so far."""
+    return [
+        AssistantEntry.model_validate(entry).message
+        for entry in map(json.loads, transcript.splitlines())
+        if entry.get("type") == "assistant" and entry["message"]["model"] != "<synthetic>"
+    ]
 
 
 def priced_at(responses: list[AssistantMessage], model: str) -> float | None:
@@ -129,19 +145,83 @@ def priced_at(responses: list[AssistantMessage], model: str) -> float | None:
     return total
 
 
-def savings(responses: list[AssistantMessage], caller_model: str | None) -> Savings | SavingsUnknown:
+def locate_run(
+    agent_messages: list[AssistantMessage],
+    session_messages: list[AssistantMessage],
+    located_text: str,
+    at: datetime,
+) -> LocateRun | SavingsUnknown:
+    """Compare locate against the calling model making the agent's calls itself in the main session.
+
+    The calling model's first call is the one that invoked locate and its last call answers, as the turn after locate's
+    ranges are read does, so both cancel. Locate adds a turn that emits the reads, sized like the call that invoked it.
+    The skill result and the code in its ranges count as four characters per token. Search output left in the main
+    context is read again by every later call, and the session's own growth per call projects how many calls remain
+    before the context reaches 200K tokens. Only the last line of each response holds its final usage.
+    """
+    responses = list({message.id: message for message in agent_messages}.values())
     if not responses:
         return SavingsUnknown(reason="the agent transcript holds no usage yet")
-    if caller_model is None:
+    if not session_messages:
         return SavingsUnknown(reason="the session transcript names no model")
     agent_model = responses[-1].model
-    actual = priced_at(responses, agent_model)
-    if actual is None:
+    agent_cost = priced_at(responses, agent_model)
+    if agent_cost is None:
         return SavingsUnknown(reason=f"no prices for {agent_model}")
-    at_caller = priced_at(responses, caller_model)
-    if at_caller is None:
-        return SavingsUnknown(reason=f"no prices for {caller_model}")
-    return Savings(dollars=at_caller - actual)
+    calling = session_messages[-1]
+    usage = calling.usage
+    context = usage.input_tokens + usage.cache_creation_input_tokens + usage.cache_read_input_tokens
+    rates = rates_for(calling.model, context)
+    if rates is None:
+        return SavingsUnknown(reason=f"no prices for {calling.model}")
+    first = session_messages[0].usage
+    session_growth = context - first.input_tokens - first.cache_creation_input_tokens - first.cache_read_input_tokens
+    session_calls = len({message.id for message in session_messages})
+    if session_calls < 2 or session_growth <= 0:
+        return SavingsUnknown(reason="the session has no growth per call to project from")
+    write_rate = rates.input * (2 if usage.cache_creation.ephemeral_1h_input_tokens else 1.25)
+
+    def calling_model_cost(read: int, write: int, output: int) -> float:
+        return (read * rates.cache_read + write * write_rate + output * rates.output) / 1_000_000
+
+    agent_first = responses[0].usage
+    agent_start = agent_first.input_tokens + agent_first.cache_creation_input_tokens + agent_first.cache_read_input_tokens
+    searching = sum(
+        calling_model_cost(
+            read=context + response.usage.cache_read_input_tokens - agent_start,
+            write=response.usage.input_tokens + response.usage.cache_creation_input_tokens,
+            output=response.usage.output_tokens if response is not responses[-1] else 0,
+        )
+        for response in responses[1:]
+    )
+    step = usage.output_tokens
+    located = len(located_text) // 4
+    reading = calling_model_cost(read=context, write=step + located, output=step) + calling_model_cost(
+        read=context + step + located, write=step, output=0
+    )
+    agent_last = responses[-1].usage
+    search_output = (
+        agent_last.input_tokens + agent_last.cache_creation_input_tokens + agent_last.cache_read_input_tokens - agent_start
+    )
+    later_calls = max(0.0, (200_000 - context) / (session_growth / (session_calls - 1)))
+    savings_if_session_ends = searching - agent_cost - reading
+    return LocateRun(
+        at=at,
+        locate_model=agent_model,
+        calling_model=calling.model,
+        calling_context_tokens=context,
+        tool_calls=sum(block.type == "tool_use" for message in agent_messages for block in message.content),
+        tokens=Tokens(
+            input=sum(response.usage.input_tokens for response in responses),
+            cache_write=sum(response.usage.cache_creation_input_tokens for response in responses),
+            cache_read=sum(response.usage.cache_read_input_tokens for response in responses),
+            output=sum(response.usage.output_tokens for response in responses),
+        ),
+        cost=agent_cost,
+        savings_if_session_ends=savings_if_session_ends,
+        savings_at_200k=savings_if_session_ends
+        + (search_output - 2 * step - located) * later_calls * rates.cache_read / 1_000_000,
+    )
 
 
 def main() -> None:
@@ -155,11 +235,24 @@ def main() -> None:
         / "subagents"
         / f"agent-{hook_input.tool_response.agent_id}.jsonl"
     )
-    responses = api_responses(agent_transcript_path.read_text())
-    caller_model = latest_model(hook_input.transcript_path.read_text())
-    match savings(responses, caller_model):
-        case Savings(dollars=dollars):
-            print(json.dumps({"systemMessage": f"Saved ${dollars:.4f} using locate"}))
+    result = hook_input.tool_response.result
+    ranges = re.finditer(r"^(/\S+):(\d+)-(\d+) ", result, re.MULTILINE)
+    located_text = result + "".join(
+        "\n".join(Path(path).read_text().splitlines()[int(start) - 1 : int(end)])
+        for path, start, end in (match.groups() for match in ranges)
+    )
+    match locate_run(
+        assistant_messages(agent_transcript_path.read_text()),
+        assistant_messages(hook_input.transcript_path.read_text()),
+        located_text,
+        datetime.now(UTC),
+    ):
+        case LocateRun() as run:
+            with (Path(os.environ["CLAUDE_PLUGIN_DATA"]) / "locate-runs.jsonl").open("a") as log:
+                log.write(run.model_dump_json() + "\n")
+            bounds = sorted({round(run.savings_if_session_ends, 2), round(run.savings_at_200k, 2)})
+            saved = " to ".join(f"${bound:.2f}" for bound in bounds)
+            print(json.dumps({"systemMessage": f"Saved {saved} using locate"}))
         case SavingsUnknown(reason=reason):
             print(f"Locate savings unknown, {reason}", file=sys.stderr)
         case unexpected:
