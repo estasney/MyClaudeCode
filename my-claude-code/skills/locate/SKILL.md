@@ -1,6 +1,6 @@
 ---
 name: locate
-description: Save tokens and cost. Ask a question, get the exact file names and line numbers in response. Argument is the question and the repo path.
+description: Use instead of Grep or Glob to find where code is defined, used, or explained. Takes a question and a repo path, returns the file paths and line ranges that answer it.
 argument-hint: <question> <repo path>
 context: fork
 agent: my-claude-code:source-locator

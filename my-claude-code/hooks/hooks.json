@@ -1,5 +1,16 @@
 {
   "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Grep|Glob",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "jq -c 'if has(\"agent_id\") then empty else {hookSpecificOutput: {hookEventName: \"PreToolUse\", additionalContext: \"To find where code is defined or used, invoke the my-claude-code:locate skill instead of Grep or Glob.\"}} end'"
+          }
+        ]
+      }
+    ],
     "PostToolUse": [
       {
         "matcher": "Skill",
