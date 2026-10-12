@@ -12,7 +12,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Literal, assert_never
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, DirectoryPath, Field
 
 
 class ForkedSkillResponse(BaseModel):
@@ -33,6 +33,10 @@ class SkillHookInput(BaseModel):
 class LocateHookInput(BaseModel):
     transcript_path: Path
     tool_response: ForkedSkillResponse
+
+
+class PluginEnvironment(BaseModel):
+    plugin_data: DirectoryPath = Field(alias="CLAUDE_PLUGIN_DATA")
 
 
 class CacheCreation(BaseModel):
@@ -229,25 +233,26 @@ def main() -> None:
     if SkillHookInput.model_validate_json(raw_input).tool_input.skill != "my-claude-code:locate":
         return
     hook_input = LocateHookInput.model_validate_json(raw_input)
+    plugin_data = PluginEnvironment.model_validate(os.environ).plugin_data
     agent_transcript_path = (
         hook_input.transcript_path.with_suffix("")
         / "subagents"
         / f"agent-{hook_input.tool_response.agent_id}.jsonl"
     )
     result = hook_input.tool_response.result
-    ranges = re.finditer(r"^(/\S+):(\d+)-(\d+) ", result, re.MULTILINE)
+    ranges = re.finditer(r"^(.+):(\d+)-(\d+) ", result, re.MULTILINE)
     located_text = result + "".join(
-        "\n".join(Path(path).read_text().splitlines()[int(start) - 1 : int(end)])
+        "\n".join(Path(path).read_text(encoding="utf-8").splitlines()[int(start) - 1 : int(end)])
         for path, start, end in (match.groups() for match in ranges)
     )
     match locate_run(
-        assistant_messages(agent_transcript_path.read_text()),
-        assistant_messages(hook_input.transcript_path.read_text()),
+        assistant_messages(agent_transcript_path.read_text(encoding="utf-8")),
+        assistant_messages(hook_input.transcript_path.read_text(encoding="utf-8")),
         located_text,
         datetime.now(UTC),
     ):
         case LocateRun() as run:
-            with (Path(os.environ["CLAUDE_PLUGIN_DATA"]) / "locate-runs.jsonl").open("a") as log:
+            with (plugin_data / "locate-runs.jsonl").open("a", encoding="utf-8") as log:
                 log.write(run.model_dump_json() + "\n")
             bounds = sorted({round(run.savings_if_session_ends, 2), round(run.savings_at_200k, 2)})
             saved = " to ".join(f"${bound:.2f}" for bound in bounds)
