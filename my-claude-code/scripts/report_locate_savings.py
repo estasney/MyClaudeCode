@@ -154,7 +154,7 @@ def locate_run(
     """Compare locate against the calling model making the agent's calls itself in the main session.
 
     The calling model's first call is the one that invoked locate and its last call answers, as the turn after locate's
-    ranges are read does, so both cancel. Locate adds a turn that emits the reads, sized like the call that invoked it.
+    ranges are read does, so both cancel. Locate adds a turn that emits the reads, with its output left out.
     The skill result and the code in its ranges count as four characters per token. Search output left in the main
     context is read again by every later call, and the session's own growth per call projects how many calls remain
     before the context reaches 200K tokens. Only the last line of each response holds its final usage.
@@ -194,10 +194,9 @@ def locate_run(
         )
         for response in responses[1:]
     )
-    step = usage.output_tokens
     located = len(located_text) // 4
-    reading = calling_model_cost(read=context, write=step + located, output=step) + calling_model_cost(
-        read=context + step + located, write=step, output=0
+    reading = calling_model_cost(read=context, write=located, output=0) + calling_model_cost(
+        read=context + located, write=0, output=0
     )
     agent_last = responses[-1].usage
     search_output = (
@@ -220,7 +219,7 @@ def locate_run(
         cost=agent_cost,
         savings_if_session_ends=savings_if_session_ends,
         savings_at_200k=savings_if_session_ends
-        + (search_output - 2 * step - located) * later_calls * rates.cache_read / 1_000_000,
+        + (search_output - located) * later_calls * rates.cache_read / 1_000_000,
     )
 
 
