@@ -6,5 +6,21 @@
   "author": {
     "name": "estasney",
     "email": "estasney@users.noreply.github.com"
+  },
+  "userConfig": {
+    "locate_reminder": {
+      "type": "string",
+      "title": "Locate reminder",
+      "description": "How often a search in the main session reminds Claude to use the locate skill",
+      "options": ["once per session", "every search"],
+      "default": "every search"
+    },
+    "locate_reminder_action": {
+      "type": "string",
+      "title": "Locate reminder action",
+      "description": "Whether a reminded search runs with a warning to Claude or is stopped",
+      "options": ["warn", "stop"],
+      "default": "warn"
+    }
   }
 }
