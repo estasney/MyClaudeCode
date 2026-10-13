@@ -8,6 +8,7 @@ const tasks = atom({ plugin: 'task-board', key: 'tasks' } as const, [])
 const draft = atom({ plugin: 'task-board', key: 'draft' } as const, { edits: {}, added: [] })
 const editingId = atom({ plugin: 'task-board', key: 'editingId' } as const, null)
 const focusedKey = atom({ plugin: 'task-board', key: 'focusedKey' } as const, null)
+const describing = atom({ plugin: 'task-board', key: 'describing' } as const, null)
 
 const statusMark: Record<TaskStatus, string> = {
   pending: '[ ]',
@@ -26,6 +27,7 @@ type BoardRow = {
   key: string
   label: string
   subject: string
+  description: string
   status: TaskStatus
   blockedBy: string[]
   isEdited: boolean
@@ -45,6 +47,7 @@ const composeRows = (saved: Task[], pending: Draft): BoardRow[] => [
         key: task.id,
         label: `#${task.id}`,
         subject: edit?.subject ?? task.subject,
+        description: edit?.description ?? task.description,
         status,
         blockedBy: task.blockedBy,
         isEdited: edit !== undefined,
@@ -56,6 +59,7 @@ const composeRows = (saved: Task[], pending: Draft): BoardRow[] => [
     key: added.draftId,
     label: 'new',
     subject: added.subject,
+    description: added.description,
     status: added.status,
     blockedBy: [],
     isEdited: true,
@@ -64,7 +68,7 @@ const composeRows = (saved: Task[], pending: Draft): BoardRow[] => [
 
 const editRow = (pending: Draft, row: BoardRow, change: TaskEdit): Draft => {
   const { source } = row
-  const { subject, status } = change
+  const { subject, description, status } = change
   switch (source.kind) {
     case 'saved':
       return {
@@ -82,6 +86,7 @@ const editRow = (pending: Draft, row: BoardRow, change: TaskEdit): Draft => {
                   ? {
                       ...added,
                       subject: subject ?? added.subject,
+                      description: description ?? added.description,
                       status: status ?? added.status,
                     }
                   : added,
@@ -94,15 +99,24 @@ const editRow = (pending: Draft, row: BoardRow, change: TaskEdit): Draft => {
   }
 }
 
+// TaskList leaves out description, activeForm, blocks and metadata, so the board reads the task files Claude Code writes.
 const syncTasks = async ($: EngineInterface) => {
-  const listed = await $.tool.call({ tool: 'TaskList' })
-  if (listed.deny !== undefined) {
-    $.ui.toast(`Task list refused: ${listed.deny}`)
-  } else if (listed.isError) {
-    $.ui.toast(`Task list failed: ${listed.text}`)
-  } else {
-    await update($, tasks, () => listed.result.tasks)
+  const listId = (await $.env.get('CLAUDE_CODE_TASK_LIST_ID')) ?? (await $.session.id())
+  const home = (await $.env.get('HOME')) ?? (await $.env.get('USERPROFILE'))
+  const configDir =
+    (await $.env.get('CLAUDE_CONFIG_DIR')) ?? (home === undefined ? undefined : `${home}/.claude`)
+  if (configDir === undefined) {
+    throw new Error('No CLAUDE_CONFIG_DIR, HOME or USERPROFILE to find the task list under')
   }
+
+  const folder = `${configDir}/tasks/${listId}`
+  const entries = (await $.fs.exists(folder)) ? await $.fs.list(folder) : []
+  const saved: Task[] = await Promise.all(
+    entries
+      .filter(entry => entry.kind === 'file' && entry.name.endsWith('.json'))
+      .map(async entry => JSON.parse(await $.fs.read(`${folder}/${entry.name}`))),
+  )
+  await update($, tasks, () => saved.toSorted((a, b) => Number(a.id) - Number(b.id)))
 }
 
 const updateTask = async ($: EngineInterface, change: BuiltinToolInputs['TaskUpdate']) => {
@@ -120,7 +134,7 @@ const createTask = async ($: EngineInterface, added: NewTask) => {
   const created = await $.tool.call({
     tool: 'TaskCreate',
     subject: added.subject,
-    description: added.subject,
+    description: added.description,
   })
   if (created.deny !== undefined) {
     $.ui.toast(`Task add refused: ${created.deny}`)
@@ -144,10 +158,24 @@ const saveDraft = async ($: EngineInterface) => {
   await syncTasks($)
 }
 
-// The pane's own $.ui.close skips this plugin's ui.close hook, so its buttons discard here.
-const closeBoard = async ($: EngineInterface) => {
+// Discards the draft and the pane's focus, and ends a description edit by putting back the prompt the person had not sent.
+const resetBoard = async ($: EngineInterface) => {
   await update($, draft, () => ({ edits: {}, added: [] }))
   await update($, editingId, () => null)
+  await update($, focusedKey, () => null)
+  const pendingDescription = await read($, describing)
+  if (pendingDescription !== null) {
+    await update($, describing, () => null)
+    const restored = await $.prompt.fill({ text: pendingDescription.savedPrompt })
+    if (!restored.isFilled) {
+      $.ui.toast(`Prompt restore refused: ${restored.refusal ?? 'no reason given'}`)
+    }
+  }
+}
+
+// The pane's own $.ui.close skips this plugin's ui.close hook, so its buttons discard here.
+const closeBoard = async ($: EngineInterface) => {
+  await resetBoard($)
   await $.ui.close({ id: PANE })
 }
 
@@ -179,11 +207,40 @@ export const register: Register = on => {
 
   // Closing the pane with Ctrl+X X or Esc discards what was not saved.
   on('ui.close', { id: PANE }, async ($, e, next) => {
-    await update($, draft, () => ({ edits: {}, added: [] }))
-    await update($, editingId, () => null)
+    await resetBoard($)
 
     return next(e)
   }).catch(($, e, next) => next(e))
+
+  // While a description is in the prompt box, Enter keeps it in the draft instead of sending it.
+  on('prompt.submit', async ($, e, next) => {
+    const pendingDescription = await read($, describing)
+    if (pendingDescription === null || e.origin.kind !== 'composer') {
+      return next(e)
+    }
+
+    await update($, describing, () => null)
+    const row = composeRows(await read($, tasks), await read($, draft)).find(
+      row => row.key === pendingDescription.rowKey,
+    )
+    if (row === undefined) {
+      await $.prompt.fill({ text: e.text })
+
+      return { drop: 'The task left the board, so its description went back to the prompt box.' }
+    }
+
+    await update($, draft, current => editRow(current, row, { description: e.text }))
+    // The engine puts a dropped prompt back in the box after this hook returns, so the restore
+    // waits a tick; the pane then takes the keys only if the restored box is empty.
+    $.clock.after(0, async () => {
+      await $.prompt.fill({ text: pendingDescription.savedPrompt })
+      await $.ui.open({ id: PANE, title: 'Tasks', focus: true })
+    })
+
+    return { drop: `Kept as the description of ${row.label}.` }
+  }).catch(($, e, next) =>
+    next.called ? next(e) : { drop: 'The task board failed to keep the description.' },
+  )
 
   // The hotkey buttons join the ring like any Button, so the ring wraps past them.
   on('ui.focus', { component: 'Pane', requestId: PANE }, async ($, e, next) => {
@@ -211,6 +268,8 @@ export const register: Register = on => {
     const editing = isActive ? await read($, editingId) : null
     const focused = isActive ? await read($, focusedKey) : null
     const focusedRow = rows.find(row => `task-${row.key}` === focused)
+    const pendingDescription = await read($, describing)
+    const describingRow = rows.find(row => row.key === pendingDescription?.rowKey)
     const doneCount = rows.filter(row => row.status === 'completed').length
     const unsavedCount = Object.keys(pending.edits).length + pending.added.length
     const labelWidth = Math.max(3, ...rows.map(row => row.label.length))
@@ -245,6 +304,7 @@ export const register: Register = on => {
                   const added: NewTask = {
                     draftId: `new-${crypto.randomUUID()}`,
                     subject: subject.trim(),
+                    description: '',
                     status: 'pending',
                   }
                   await update($, draft, current => ({
@@ -323,6 +383,19 @@ export const register: Register = on => {
             </Box>
           ),
         )}
+        {/* Below the list, since a description can run to a paragraph. */}
+        {focusedRow !== undefined && focusedRow.description !== '' && (
+          <Box marginTop={1}>
+            <Text dimColor>{focusedRow.description}</Text>
+          </Box>
+        )}
+        {describingRow !== undefined && (
+          <Box marginTop={1}>
+            <Text color="warning">
+              {`The description of ${describingRow.label} is in the prompt box: Enter keeps it.`}
+            </Text>
+          </Box>
+        )}
         {!isActive && (
           <Box marginTop={1}>
             <Text dimColor>Ctrl+X Tab to edit</Text>
@@ -388,6 +461,26 @@ export const register: Register = on => {
                   if (focusedRow !== undefined) {
                     await update($, editingId, () => focusedRow.key)
                     await $.ui.focus({ requestId: PANE, key: `subject-${focusedRow.key}` })
+                  }
+                }}
+              />
+              {/* Claude Code's prompt box edits many lines and opens an external editor; an Input holds one line. */}
+              <Button
+                key="describe"
+                plain
+                hotkey="i"
+                label="describe"
+                dimColor={focusedRow === undefined}
+                onPress={async () => {
+                  if (focusedRow !== undefined) {
+                    const savedPrompt =
+                      (await read($, describing))?.savedPrompt ?? (await $.prompt.read()).text
+                    const filled = await $.prompt.fill({ text: focusedRow.description })
+                    if (filled.isFilled) {
+                      await update($, describing, () => ({ rowKey: focusedRow.key, savedPrompt }))
+                    } else {
+                      $.ui.toast(`Prompt fill refused: ${filled.refusal ?? 'no reason given'}`)
+                    }
                   }
                 }}
               />
