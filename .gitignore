@@ -8,3 +8,4 @@
 !**/.python-version
 **/__pycache__
 **/*.ses
+**/evals/results
