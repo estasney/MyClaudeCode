@@ -1,6 +1,5 @@
 import type { On } from 'claude-code'
 import { expect, mock, test } from 'claude-code/testing'
-import type { MockClock } from 'claude-code/testing'
 
 import type { Task } from '../types'
 
@@ -60,9 +59,7 @@ type FakeClaudeCode = {
   closedId: string
   focused: string | undefined
   prompt: string
-  sent: string[]
   toasts: string[]
-  clock: MockClock
 }
 
 // Stands in for Claude Code: the task files under TASK_FOLDER, the task tools, the prompt box, and the pane calls.
@@ -72,9 +69,7 @@ const fakeClaudeCode = (on: On): FakeClaudeCode => {
     closedId: '',
     focused: undefined,
     prompt: '',
-    sent: [],
     toasts: [],
-    clock: mock.clock(on),
   }
 
   mock.env(on, { HOME: '/home/tester' })
@@ -113,16 +108,10 @@ const fakeClaudeCode = (on: On): FakeClaudeCode => {
 
     return { value: undefined }
   })
-  on('prompt.read', () => ({ value: { text: claude.prompt, cursor: claude.prompt.length } }))
   on('prompt.fill', ($, e) => {
     claude.prompt = e.mode === 'replace' ? e.text : claude.prompt + e.text
 
     return { isFilled: true }
-  })
-  on('prompt.submit', ($, e) => {
-    claude.sent.push(e.text)
-
-    return { text: e.text }
   })
   on('tool.call', { tool: 'TaskCreate' }, ($, e) => {
     const id = String(Math.max(0, ...claude.stored.map(task => Number(task.id))) + 1)
@@ -268,81 +257,50 @@ test('pane edits stay in a draft until saved, and close discards them', async ($
   }
 })
 
-test('describe edits the description in the prompt box and close cancels it', async ($, on) => {
+test('edit and describe focus their fields in the pane and the new text saves', async ($, on) => {
   const claude = fakeClaudeCode(on)
-  const enter = (text: string) =>
-    $.prompt.submit({ text, wait: false, origin: { kind: 'composer' } })
 
   for (const surface of ['terminal', 'desktop'] as const) {
     claude.stored = SEEDED
     claude.prompt = 'half-typed question'
-    claude.sent = []
-    await $.command.run(OPEN)
-    const ui = await $.ui.mount({ ...PANE, surface })
-
-    await $.ui.focus({ ...FOCUS, element: 'task-1' })
-    await ui.press({ key: 'describe' })
-    expect(claude.prompt).toBe('Define the tables.')
-    expect(
-      await ui.find({ type: 'Text', text: /description of #1 is in the prompt box/ }),
-    ).toBeDefined()
-
-    expect(await enter('Define the tables and their indexes.')).toEqual({
-      drop: 'Kept as the description of #1.',
-    })
-    expect(claude.sent).toEqual([])
-    // The engine puts a dropped prompt back in the box; the board's restore runs after it.
-    claude.prompt = 'Define the tables and their indexes.'
-    await claude.clock.settle()
-    expect(claude.prompt).toBe('half-typed question')
-    expect(
-      await ui.find({ type: 'Text', text: 'Define the tables and their indexes.' }),
-    ).toBeDefined()
-    expect(await ui.find({ type: 'Text', text: '1 unsaved' })).toBeDefined()
-
-    await enter('A prompt for Claude')
-    expect(claude.sent).toEqual(['A prompt for Claude'])
-
-    await ui.press({ key: 'save' })
-    expect(claude.stored).toEqual([
-      { ...SEEDED[0], description: 'Define the tables and their indexes.' },
-      SEEDED[1],
-    ])
-    await ui.unmount()
-
-    await $.command.run(OPEN)
-    const reopened = await $.ui.mount({ ...PANE, surface })
-    await $.ui.focus({ ...FOCUS, element: 'task-2' })
-    await reopened.press({ key: 'describe' })
-    expect(claude.prompt).toBe('Migrate the tables.')
-    await reopened.press({ key: 'close' })
-    expect(claude.prompt).toBe('half-typed question')
-    expect(await reopened.find({ type: 'Text', text: /in the prompt box/ })).toBeUndefined()
-
-    await enter('Another prompt for Claude')
-    expect(claude.sent).toEqual(['A prompt for Claude', 'Another prompt for Claude'])
-    await reopened.unmount()
-  }
-})
-
-test('the edit button focuses the subject field and the new subject saves', async ($, on) => {
-  const claude = fakeClaudeCode(on)
-
-  for (const surface of ['terminal', 'desktop'] as const) {
-    claude.stored = SEEDED
     await $.command.run(OPEN)
     const ui = await $.ui.mount({ ...PANE, surface })
 
     await $.ui.focus({ ...FOCUS, element: 'task-1' })
     await ui.press({ key: 'edit' })
     expect(claude.focused).toBe('subject-1')
-
     await ui.input({ key: 'subject-1', text: 'Write the schema' })
     expect(await ui.find({ type: 'Text', text: 'Write the schema' })).toBeDefined()
+
+    await $.ui.focus({ ...FOCUS, element: 'task-2' })
+    await ui.press({ key: 'describe' })
+    expect(claude.focused).toBe('description-2')
+    expect((await ui.find({ key: 'description-2' }))?.props.value).toBe('Migrate the tables.')
+    expect(claude.prompt).toBe('half-typed question')
+    await ui.input({ key: 'description-2', text: 'Migrate the tables and their indexes.' })
+    expect(await ui.find({ key: 'description-2' })).toBeUndefined()
+    await $.ui.focus({ ...FOCUS, element: 'task-2' })
+    expect(
+      await ui.find({ type: 'Text', text: 'Migrate the tables and their indexes.' }),
+    ).toBeDefined()
+    expect(await ui.find({ type: 'Text', text: '2 unsaved' })).toBeDefined()
     expect(claude.stored).toEqual(SEEDED)
 
     await ui.press({ key: 'save' })
-    expect(claude.stored).toEqual([{ ...SEEDED[0], subject: 'Write the schema' }, SEEDED[1]])
+    expect(claude.stored).toEqual([
+      { ...SEEDED[0], subject: 'Write the schema' },
+      { ...SEEDED[1], description: 'Migrate the tables and their indexes.' },
+    ])
     await ui.unmount()
+
+    await $.command.run(OPEN)
+    const reopened = await $.ui.mount({ ...PANE, surface })
+    await $.ui.focus({ ...FOCUS, element: 'task-1' })
+    await reopened.press({ key: 'describe' })
+    expect(await reopened.find({ key: 'description-1' })).toBeDefined()
+    await reopened.press({ key: 'close' })
+    expect(await reopened.find({ key: 'description-1' })).toBeUndefined()
+    expect(claude.prompt).toBe('half-typed question')
+    await reopened.unmount()
   }
 })

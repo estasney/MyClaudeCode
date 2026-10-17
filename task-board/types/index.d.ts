@@ -24,17 +24,16 @@ export type NewTask = { draftId: string; subject: string; description: string; s
 
 export type Draft = { edits: Record<string, TaskEdit>; added: NewTask[] }
 
-// A description sent to the prompt box for editing, and the unsent prompt it replaced.
-export type DescriptionEdit = { rowKey: string; savedPrompt: string }
+// The row field an Input in the pane is editing.
+export type FieldEdit = { key: string; field: 'subject' | 'description' }
 
 declare module 'claude-code' {
   interface PluginState {
     'task-board': {
       tasks: Task[]
       draft: Draft
-      editingId: string | null
+      editing: FieldEdit | null
       focusedKey: string | null
-      describing: DescriptionEdit | null
     }
   }
 }

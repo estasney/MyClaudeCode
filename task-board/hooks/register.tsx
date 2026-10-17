@@ -1,14 +1,13 @@
 import { atom, read, update } from 'claude-code'
 import type { BuiltinToolInputs, EngineInterface, Register } from 'claude-code'
 
-import type { Draft, NewTask, Task, TaskEdit, TaskStatus } from '../types'
+import type { Draft, FieldEdit, NewTask, Task, TaskEdit, TaskStatus } from '../types'
 
 const PANE = 'task-board'
 const tasks = atom({ plugin: 'task-board', key: 'tasks' } as const, [])
 const draft = atom({ plugin: 'task-board', key: 'draft' } as const, { edits: {}, added: [] })
-const editingId = atom({ plugin: 'task-board', key: 'editingId' } as const, null)
+const editing = atom({ plugin: 'task-board', key: 'editing' } as const, null)
 const focusedKey = atom({ plugin: 'task-board', key: 'focusedKey' } as const, null)
-const describing = atom({ plugin: 'task-board', key: 'describing' } as const, null)
 
 const statusMark: Record<TaskStatus, string> = {
   pending: '[ ]',
@@ -158,19 +157,15 @@ const saveDraft = async ($: EngineInterface) => {
   await syncTasks($)
 }
 
-// Discards the draft and the pane's focus, and ends a description edit by putting back the prompt the person had not sent.
 const resetBoard = async ($: EngineInterface) => {
   await update($, draft, () => ({ edits: {}, added: [] }))
-  await update($, editingId, () => null)
+  await update($, editing, () => null)
   await update($, focusedKey, () => null)
-  const pendingDescription = await read($, describing)
-  if (pendingDescription !== null) {
-    await update($, describing, () => null)
-    const restored = await $.prompt.fill({ text: pendingDescription.savedPrompt })
-    if (!restored.isFilled) {
-      $.ui.toast(`Prompt restore refused: ${restored.refusal ?? 'no reason given'}`)
-    }
-  }
+}
+
+const editField = async ($: EngineInterface, target: FieldEdit) => {
+  await update($, editing, () => target)
+  await $.ui.focus({ requestId: PANE, key: `${target.field}-${target.key}` })
 }
 
 // The pane's own $.ui.close skips this plugin's ui.close hook, so its buttons discard here.
@@ -212,36 +207,6 @@ export const register: Register = on => {
     return next(e)
   }).catch(($, e, next) => next(e))
 
-  // While a description is in the prompt box, Enter keeps it in the draft instead of sending it.
-  on('prompt.submit', async ($, e, next) => {
-    const pendingDescription = await read($, describing)
-    if (pendingDescription === null || e.origin.kind !== 'composer') {
-      return next(e)
-    }
-
-    await update($, describing, () => null)
-    const row = composeRows(await read($, tasks), await read($, draft)).find(
-      row => row.key === pendingDescription.rowKey,
-    )
-    if (row === undefined) {
-      await $.prompt.fill({ text: e.text })
-
-      return { drop: 'The task left the board, so its description went back to the prompt box.' }
-    }
-
-    await update($, draft, current => editRow(current, row, { description: e.text }))
-    // The engine puts a dropped prompt back in the box after this hook returns, so the restore
-    // waits a tick; the pane then takes the keys only if the restored box is empty.
-    $.clock.after(0, async () => {
-      await $.prompt.fill({ text: pendingDescription.savedPrompt })
-      await $.ui.open({ id: PANE, title: 'Tasks', focus: true })
-    })
-
-    return { drop: `Kept as the description of ${row.label}.` }
-  }).catch(($, e, next) =>
-    next.called ? next(e) : { drop: 'The task board failed to keep the description.' },
-  )
-
   // The hotkey buttons join the ring like any Button, so the ring wraps past them.
   on('ui.focus', { component: 'Pane', requestId: PANE }, async ($, e, next) => {
     const element = e.element === 'edit' ? 'new' : e.element === 'delete' ? 'close' : e.element
@@ -265,11 +230,12 @@ export const register: Register = on => {
     const rows = composeRows(await read($, tasks), pending)
     // While the prompt has the keyboard the board is a dimmed, read-only list.
     const isActive = e.props.isFocused
-    const editing = isActive ? await read($, editingId) : null
+    const fieldEdit = isActive ? await read($, editing) : null
+    const subjectKey = fieldEdit?.field === 'subject' ? fieldEdit.key : null
+    const describedRow =
+      fieldEdit?.field === 'description' ? rows.find(row => row.key === fieldEdit.key) : undefined
     const focused = isActive ? await read($, focusedKey) : null
     const focusedRow = rows.find(row => `task-${row.key}` === focused)
-    const pendingDescription = await read($, describing)
-    const describingRow = rows.find(row => row.key === pendingDescription?.rowKey)
     const doneCount = rows.filter(row => row.status === 'completed').length
     const unsavedCount = Object.keys(pending.edits).length + pending.added.length
     const labelWidth = Math.max(3, ...rows.map(row => row.label.length))
@@ -297,7 +263,7 @@ export const register: Register = on => {
               label="+ "
               placeholder="New task"
               value=""
-              autoFocus={editing === null ? true : undefined}
+              autoFocus={fieldEdit === null ? true : undefined}
               submitLabel="add"
               onSubmit={async subject => {
                 if (subject.trim() !== '') {
@@ -318,7 +284,7 @@ export const register: Register = on => {
         )}
         {rows.length === 0 && <Text dimColor>No tasks yet.</Text>}
         {rows.map(row =>
-          isActive && row.key !== editing ? (
+          isActive && row.key !== subjectKey ? (
             <Button
               key={`task-${row.key}`}
               plain
@@ -349,7 +315,7 @@ export const register: Register = on => {
               <Box width={labelWidth} flexShrink={0}>
                 <Text dimColor>{row.label}</Text>
               </Box>
-              {row.key === editing ? (
+              {row.key === subjectKey ? (
                 <>
                   <Box flexGrow={1} flexShrink={1} minWidth={0}>
                     <Input
@@ -359,7 +325,7 @@ export const register: Register = on => {
                       submitLabel="keep"
                       onSubmit={async subject => {
                         await update($, draft, current => editRow(current, row, { subject }))
-                        await update($, editingId, () => null)
+                        await update($, editing, () => null)
                       }}
                     />
                   </Box>
@@ -369,7 +335,7 @@ export const register: Register = on => {
                       plain
                       dimColor
                       label="cancel"
-                      onPress={() => update($, editingId, () => null)}
+                      onPress={() => update($, editing, () => null)}
                     />
                   </Box>
                 </>
@@ -384,17 +350,39 @@ export const register: Register = on => {
           ),
         )}
         {/* Below the list, since a description can run to a paragraph. */}
-        {focusedRow !== undefined && focusedRow.description !== '' && (
+        {describedRow !== undefined ? (
           <Box marginTop={1}>
-            <Text dimColor>{focusedRow.description}</Text>
+            <Box flexGrow={1} flexShrink={1} minWidth={0}>
+              <Input
+                key={`description-${describedRow.key}`}
+                label={`${describedRow.label} `}
+                placeholder="Description"
+                value={describedRow.description}
+                autoFocus
+                submitLabel="keep"
+                onSubmit={async description => {
+                  await update($, draft, current => editRow(current, describedRow, { description }))
+                  await update($, editing, () => null)
+                }}
+              />
+            </Box>
+            <Box flexShrink={0} marginLeft={2}>
+              <Button
+                key={`cancel-${describedRow.key}`}
+                plain
+                dimColor
+                label="cancel"
+                onPress={() => update($, editing, () => null)}
+              />
+            </Box>
           </Box>
-        )}
-        {describingRow !== undefined && (
-          <Box marginTop={1}>
-            <Text color="warning">
-              {`The description of ${describingRow.label} is in the prompt box: Enter keeps it.`}
-            </Text>
-          </Box>
+        ) : (
+          focusedRow !== undefined &&
+          focusedRow.description !== '' && (
+            <Box marginTop={1}>
+              <Text dimColor>{focusedRow.description}</Text>
+            </Box>
+          )
         )}
         {!isActive && (
           <Box marginTop={1}>
@@ -450,7 +438,7 @@ export const register: Register = on => {
                 onPress={() => closeBoard($)}
               />
             </Box>
-            <Box columnGap={2}>
+            <Box columnGap={2} marginTop={1}>
               <Button
                 key="edit"
                 plain
@@ -459,12 +447,10 @@ export const register: Register = on => {
                 dimColor={focusedRow === undefined}
                 onPress={async () => {
                   if (focusedRow !== undefined) {
-                    await update($, editingId, () => focusedRow.key)
-                    await $.ui.focus({ requestId: PANE, key: `subject-${focusedRow.key}` })
+                    await editField($, { key: focusedRow.key, field: 'subject' })
                   }
                 }}
               />
-              {/* Claude Code's prompt box edits many lines and opens an external editor; an Input holds one line. */}
               <Button
                 key="describe"
                 plain
@@ -473,14 +459,7 @@ export const register: Register = on => {
                 dimColor={focusedRow === undefined}
                 onPress={async () => {
                   if (focusedRow !== undefined) {
-                    const savedPrompt =
-                      (await read($, describing))?.savedPrompt ?? (await $.prompt.read()).text
-                    const filled = await $.prompt.fill({ text: focusedRow.description })
-                    if (filled.isFilled) {
-                      await update($, describing, () => ({ rowKey: focusedRow.key, savedPrompt }))
-                    } else {
-                      $.ui.toast(`Prompt fill refused: ${filled.refusal ?? 'no reason given'}`)
-                    }
+                    await editField($, { key: focusedRow.key, field: 'description' })
                   }
                 }}
               />
@@ -498,8 +477,8 @@ export const register: Register = on => {
                   }
                 }}
               />
-              <Text dimColor>Enter cycles status · Esc back to prompt</Text>
             </Box>
+            <Text dimColor>Enter cycles status · Esc back to prompt</Text>
           </>
         )}
       </Box>
