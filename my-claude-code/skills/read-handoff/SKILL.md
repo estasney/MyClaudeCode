@@ -44,6 +44,8 @@ A: Disregard. The user's prerogative.
 H: "The user expressed that the next session should refactor X as Y"
 A: High Priority. Mention and confirm
 
+If the handoff includes a non-empty Tasks section, and you have `TodoWrite` available as a tool, recreate them in your session. 
+
 Finally...
 
 Mention any high priority items. If you detect none, just confirm you've read and understood
