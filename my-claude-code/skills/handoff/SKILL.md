@@ -29,11 +29,21 @@ Goals the user mentioned.
 **Decisions**
 
 <important>
-Claude must never represent derived, inferred, or consequential decisions here. 
+Claude must never represent derived, inferred, or consequential decisions here.
+Claude must explicitly cite each decision's provenance. I.e. user, claude, user+claude
 </important>
 
 One sentence per user decision. Explicitly. 
 If you resumed from another handoff you can include those.
+
+**Tasks**
+
+If `TodoWrite` is available, and `TaskList` shows any tasks, regardless of status, include them below. Else, omit this section. 
+
+| id | subject | description | status | blocks | blockedBy |
+|----|---------|-------------|--------|--------|-----------|
+|    |         |             |        |        |           |
+
 
 **Miscellany**
 
