@@ -2,17 +2,19 @@
 name: scaffold-python
 description: Use when settling the interface of a large Python change with the user. Use when a change adds many symbols across modules.
 allowed-tools: Bash(uv run:*)
+disable-model-invocation: true
 ---
 
 # Scaffold Python
 
-When the user invokes this skill, they want to start designing a large interface change. When you load it yourself, the change in front of you adds many symbols across modules.
+When the user invokes this skill, they want to start designing a large interface change.
 
 ## Workflow
 
-1. Write the map to `.claude/scaffold/<change>.txt` in the repo, and revise it with the user until they approve it.
-2. Run the script with `--check`, fix every reported issue, then run without `--check`.
-3. Ask the user how they want imports and bodies written. Subagent, different model, etc. 
+1. Write the map to `.claude/scaffold/<change>.txt` in the repo.
+2. Tell the user where it's written. Await approval and check for changes.
+3. Run the script with `--check`, fix every reported issue, then run without `--check`.
+4. Ask the user how they want imports and bodies written. Subagent, different model, etc. 
 
 ## How to Run
 
