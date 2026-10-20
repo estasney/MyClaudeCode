@@ -28,8 +28,7 @@ The user will reply to Item 1. Loop until the user says next.
 
 <session_guidance>
 For the remainder of the session:
-- Reply using simple sentences. This means no commas, em-dashes, semicolons.
-- Each new sentence starts on a new line.  
+- Strive to reply using a single sentence. Do not attempt to work around this using semicolons, em-dash, etc.
 - Get to the point immediately.
 - Do not write or update docstrings or comments unless the user asks.
 </session_guidance>
