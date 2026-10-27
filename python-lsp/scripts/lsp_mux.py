@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # /// script
 # requires-python = ">=3.12"
-# dependencies = []
+# dependencies = ["watchfiles>=1.3"]
 # ///
 """lsp_mux: present several LSP servers to an editor as a single stdio server.
 
@@ -20,6 +20,8 @@ import os
 import signal
 import sys
 import threading
+import tomllib
+from collections import Counter
 from collections.abc import Coroutine, Iterable, Sequence
 from contextlib import suppress
 from dataclasses import dataclass, field
@@ -28,7 +30,7 @@ from pathlib import Path
 from typing import BinaryIO, Protocol, Self, assert_never, cast
 from urllib.parse import unquote, urlsplit
 
-import tomllib
+from watchfiles import Change, awatch
 
 type JsonValue = (
     None | bool | int | float | str | list[JsonValue] | dict[str, JsonValue]
@@ -446,12 +448,32 @@ def with_pull_diagnostics(capabilities: JsonValue) -> JsonObject:
     return extended
 
 
-def partition_by_method(
-    entries: list[JsonValue], method: str
+def with_watched_files(capabilities: JsonValue) -> JsonObject:
+    extended = copy.deepcopy(as_object(capabilities))
+    workspace = as_object(extended.get("workspace"))
+    workspace["didChangeWatchedFiles"] = {"dynamicRegistration": True}
+    extended["workspace"] = workspace
+    return extended
+
+
+def file_change_type(change: Change) -> int:
+    match change:
+        case Change.added:
+            return 1
+        case Change.modified:
+            return 2
+        case Change.deleted:
+            return 3
+        case _:
+            assert_never(change)
+
+
+def partition_by_methods(
+    entries: list[JsonValue], methods: set[str]
 ) -> tuple[list[JsonValue], list[JsonValue]]:
     """Split registrations (or unregistrations) into those for method and the rest."""
-    matching = [entry for entry in entries if as_object(entry).get("method") == method]
-    rest = [entry for entry in entries if as_object(entry).get("method") != method]
+    matching = [entry for entry in entries if as_object(entry).get("method") in methods]
+    rest = [entry for entry in entries if as_object(entry).get("method") not in methods]
     return matching, rest
 
 
@@ -782,6 +804,7 @@ class Server:
         self.pending: dict[int, Pending] = {}
         # client request id -> id we used toward this server (for $/cancelRequest)
         self.inflight_for_client: dict[MsgId, int] = {}
+        self.file_watchers: set[str] = set()
 
     @property
     def name(self) -> str:
@@ -890,9 +913,11 @@ class Proxy:
         self.diagnostics: dict[DocumentId, dict[int, list[JsonValue]]] = {}
         # document -> gate withholding merged publishes while an edit settles
         self.holds: dict[DocumentId, DocumentHold] = {}
+        self.pulls_in_flight: Counter[DocumentId] = Counter()
         # document -> its client URI spelling and latest version
         self.open_documents: dict[DocumentId, OpenDocument] = {}
         self.workspace: Workspace = Workspace(platform)
+        self.roots_changed: asyncio.Event = asyncio.Event()
         # executeCommand command name -> server
         self.command_owners: dict[str, Server] = {}
         self.exiting: asyncio.Event = asyncio.Event()
@@ -919,6 +944,7 @@ class Proxy:
             ]
             loops.append(group.create_task(self.client_loop(), name="client"))
             loops.append(group.create_task(self.watch_exit(), name="exit-watch"))
+            loops.append(group.create_task(self.watch_files(), name="file-watch"))
             debug("running", len(loops), "loops")
 
     async def watch_exit(self) -> None:
@@ -933,6 +959,40 @@ class Proxy:
                 if proc.returncode is None:
                     proc.kill()
         raise ShuttingDown  # unwind the TaskGroup, cancelling the loops
+
+    async def watch_files(self) -> None:
+        while True:
+            await wait_for_event(self.roots_changed)
+            self.roots_changed.clear()
+            roots = sorted(self.workspace.roots)
+            if not roots:
+                continue
+            debug("watching", roots)
+            async for changes in awatch(*roots, stop_event=self.roots_changed):
+                await self.notify_file_watchers(
+                    [
+                        {"uri": Path(path).as_uri(), "type": file_change_type(change)}
+                        for change, path in sorted(changes)
+                    ]
+                )
+
+    async def report_opened_file(self, params: JsonValue) -> None:
+        ref = parse_text_document(params)
+        if ref is None:
+            return
+        doc = DocumentId.from_uri(ref.uri, self.platform)
+        if doc.is_file and Path(doc.key).is_file():
+            await self.notify_file_watchers(
+                [{"uri": ref.uri, "type": file_change_type(Change.added)}]
+            )
+
+    async def notify_file_watchers(self, changes: list[JsonValue]) -> None:
+        debug("file changes:", changes)
+        for server in self.servers:
+            if server.file_watchers:
+                await server.endpoint.notify(
+                    "workspace/didChangeWatchedFiles", {"changes": changes}
+                )
 
     # ---- client -> proxy -------------------------------------------------
 
@@ -1006,6 +1066,8 @@ class Proxy:
                     await server.endpoint.notify(method, payload)
             case _ if method in BROADCAST_NOTIFICATIONS:
                 self.track_client_state(method, params)
+                if method == "textDocument/didOpen":
+                    await self.report_opened_file(params)
                 for server in self.servers:
                     await server.endpoint.notify(method, params)
                 # Pull only after the edit is written, so the answer covers it.
@@ -1064,10 +1126,12 @@ class Proxy:
                     per_server["initializationOptions"] = None
                 case options:
                     per_server["initializationOptions"] = options
-            if server.config.pull_diagnostics:
-                per_server["capabilities"] = with_pull_diagnostics(
-                    request.get("capabilities")
-                )
+            capabilities = with_watched_files(request.get("capabilities"))
+            per_server["capabilities"] = (
+                with_pull_diagnostics(capabilities)
+                if server.config.pull_diagnostics
+                else capabilities
+            )
             futures.append(server.send_request("initialize", per_server))
         results = [as_object(result) for result in await asyncio.gather(*futures)]
 
@@ -1105,6 +1169,7 @@ class Proxy:
         root_path = as_str(params.get("rootPath"))
         if not self.workspace.roots and root_path is not None:
             self.workspace = self.workspace.with_local_root(root_path)
+        self.roots_changed.set()
 
     def register_commands(self, server: Server) -> None:
         provider = as_object(server.capabilities.get("executeCommandProvider"))
@@ -1245,33 +1310,44 @@ class Proxy:
         and refresh requests are the mux's to handle.
         """
         match request.method:
-            case "client/registerCapability" if server.config.pull_diagnostics:
-                await self.strip_pull_entries(server, request, "registrations")
-            case "client/unregisterCapability" if server.config.pull_diagnostics:
-                await self.strip_pull_entries(server, request, "unregisterations")
+            case "client/registerCapability":
+                server.file_watchers |= await self.consume_registrations(
+                    server, request, "registrations"
+                )
+            case "client/unregisterCapability":
+                server.file_watchers -= await self.consume_registrations(
+                    server, request, "unregisterations"
+                )
             case "workspace/diagnostic/refresh" if server.config.pull_diagnostics:
                 await server.endpoint.send(Response(request.id, result=None))
                 self.pull_open_documents(server)
             case _:
                 await self.forward_server_request(server, request)
 
-    async def strip_pull_entries(
+    async def consume_registrations(
         self, server: Server, request: Request, key: str
-    ) -> None:
+    ) -> set[str]:
         """Drop textDocument/diagnostic entries; the mux pulls whatever is registered."""
+        served = {"workspace/didChangeWatchedFiles"}
+        if server.config.pull_diagnostics:
+            served.add("textDocument/diagnostic")
         params = as_object(request.params)
-        pulls, rest = partition_by_method(
-            as_list(params.get(key)), "textDocument/diagnostic"
-        )
-        debug(f"{server.name}: {request.method} consumed", pulls)
-        if not rest:
+        consumed, rest = partition_by_methods(as_list(params.get(key)), served)
+        debug(f"{server.name}: {request.method} consumed", consumed)
+        if rest:
+            forwarded = dict(params)
+            forwarded[key] = rest
+            await self.forward_server_request(
+                server, Request(request.id, request.method, forwarded)
+            )
+        else:
             await server.endpoint.send(Response(request.id, result=None))
-            return
-        forwarded = dict(params)
-        forwarded[key] = rest
-        await self.forward_server_request(
-            server, Request(request.id, request.method, forwarded)
-        )
+        return {
+            registration_id
+            for entry in consumed
+            if as_object(entry).get("method") == "workspace/didChangeWatchedFiles"
+            and (registration_id := as_str(as_object(entry).get("id"))) is not None
+        }
 
     async def forward_server_request(self, server: Server, request: Request) -> None:
         self.next_client_id += 1
@@ -1325,6 +1401,9 @@ class Proxy:
         per_doc = self.diagnostics.setdefault(doc, {})
         per_doc[server.index] = diagnostics
         hold = self.holds.get(doc)
+        if hold is None and self.pulls_in_flight[doc]:
+            debug(f"{server.name}: pull in flight for {doc.uri}; emitting after it")
+            return
         if hold is None:
             debug(f"{server.name}: no hold for {doc.uri}; emitting now")
             await self.emit_merged(doc, version=version)
@@ -1376,12 +1455,15 @@ class Proxy:
         still release.
         """
         params: JsonObject = {"textDocument": {"uri": open_doc.id.uri}}
+        self.pulls_in_flight[open_doc.id] += 1
         try:
             report = await server.send_request("textDocument/diagnostic", params)
             diagnostics = as_list(as_object(report).get("items"))
         except RemoteError as exc:
             log(f"{server.name}: pull for {open_doc.id.uri} failed:", exc)
             diagnostics = []
+        finally:
+            self.pulls_in_flight[open_doc.id] -= 1
         if self.open_documents.get(open_doc.id) != open_doc:
             debug(
                 f"{server.name}: pull for {open_doc.id.uri}",
@@ -1389,6 +1471,8 @@ class Proxy:
                 open_doc.version,
                 "superseded; dropping",
             )
+            if open_doc.id not in self.holds and not self.pulls_in_flight[open_doc.id]:
+                await self.emit_merged(open_doc.id, version=None)
             return
         await self.accept_diagnostics(
             server, open_doc.id, open_doc.version, diagnostics
@@ -1430,6 +1514,7 @@ class Proxy:
                     workspace_folder_uris(event.get("added")),
                     workspace_folder_uris(event.get("removed")),
                 )
+                self.roots_changed.set()
             case _:
                 pass
 
