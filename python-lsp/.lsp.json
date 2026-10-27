@@ -15,6 +15,7 @@
     "settings": {
       "basedpyright": {
         "analysis": {
+          "autoSearchPaths": true,
           "diagnosticSeverityOverrides": {
             "reportAny": "none"
           }
