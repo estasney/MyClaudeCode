@@ -1,7 +1,7 @@
 ---
 name: writing-style-hooks
 description: Install, uninstall, or check the status of the writing-style hooks that enforce the user's banned-word list. Use when the user asks to set up, remove, or inspect writing-style hooks, or to add or remove banned words.
-argument-hint: [install | uninstall | status | test | add <word or phrase> | remove <word or phrase>]
+argument-hint: "[install | uninstall | status | test | add <word or phrase> | remove <word or phrase>]"
 allowed-tools: Bash, Write
 disable-model-invocation: true
 ---

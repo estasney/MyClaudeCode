@@ -1,7 +1,7 @@
 ---
 name: read-handoff
 description: Resume work from a handoff note without rediscovering the codebase. Manual; invoke with /read-handoff.
-argument-hint: [optional filename fragment or keyword]
+argument-hint: "[optional filename fragment or keyword]"
 allowed-tools: Bash, Read, Grep
 disable-model-invocation: true
 ---

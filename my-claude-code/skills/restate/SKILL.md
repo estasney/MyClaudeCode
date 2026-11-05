@@ -1,7 +1,7 @@
 ---
 name: restate
 description: User run skill to remind claude to communicate effectively.
-argument-hint: [optional note]
+argument-hint: "[optional note]"
 disable-model-invocation: true
 ---
 
