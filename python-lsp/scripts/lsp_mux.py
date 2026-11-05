@@ -25,7 +25,7 @@ from collections import Counter
 from collections.abc import Coroutine, Iterable, Sequence
 from contextlib import suppress
 from dataclasses import dataclass, field
-from enum import Enum, auto
+from enum import Enum, IntEnum, auto
 from pathlib import Path
 from typing import BinaryIO, Protocol, Self, assert_never, cast
 from urllib.parse import unquote, urlsplit
@@ -541,6 +541,24 @@ def config_object(raw: JsonObject, key: str) -> JsonObject | None:
     return value
 
 
+class Severity(IntEnum):
+    error = 1
+    warning = 2
+    information = 3
+    hint = 4
+
+
+def config_severity(raw: JsonObject, key: str) -> Severity:
+    name = config_str(raw, key)
+    if name is None:
+        return Severity.hint
+    if name not in Severity.__members__:
+        raise ValueError(
+            f"config field {key!r} must be one of {', '.join(Severity.__members__)}"
+        )
+    return Severity[name]
+
+
 @dataclass(slots=True, frozen=True)
 class ServerConfig:
     name: str
@@ -552,6 +570,7 @@ class ServerConfig:
     settings: JsonObject | None = None
     # The mux pulls this server's diagnostics instead of taking its pushes.
     pull_diagnostics: bool = False
+    minimum_severity: Severity = Severity.hint
 
     def __post_init__(self) -> None:
         if self.cmd is None and self.port is None:
@@ -570,6 +589,7 @@ class ServerConfig:
             initialization_options=config_object(raw, "initializationOptions"),
             settings=config_object(raw, "settings"),
             pull_diagnostics=config_bool(raw, "pullDiagnostics"),
+            minimum_severity=config_severity(raw, "minimumSeverity"),
         )
 
 
@@ -579,6 +599,7 @@ DEFAULT_CONFIG: tuple[ServerConfig, ...] = (
         cmd="uvx",
         args=("--from", "basedpyright", "basedpyright-langserver", "--stdio"),
         pull_diagnostics=True,
+        minimum_severity=Severity.warning,
     ),
     ServerConfig(name="ruff", cmd="uvx", args=("ruff", "server")),
 )
@@ -1399,7 +1420,12 @@ class Proxy:
     ) -> None:
         """Store one server's diagnostics for a document; emit unless a hold waits."""
         per_doc = self.diagnostics.setdefault(doc, {})
-        per_doc[server.index] = diagnostics
+        per_doc[server.index] = [
+            diagnostic
+            for diagnostic in diagnostics
+            if (severity := as_int(as_object(diagnostic).get("severity"))) is None
+            or severity <= server.config.minimum_severity
+        ]
         hold = self.holds.get(doc)
         if hold is None and self.pulls_in_flight[doc]:
             debug(f"{server.name}: pull in flight for {doc.uri}; emitting after it")

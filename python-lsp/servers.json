@@ -4,7 +4,8 @@
       "name": "basedpyright",
       "cmd": "uvx",
       "args": ["--from", "basedpyright", "basedpyright-langserver", "--stdio"],
-      "pullDiagnostics": true
+      "pullDiagnostics": true,
+      "minimumSeverity": "warning"
     },
     {
       "name": "ruff",
