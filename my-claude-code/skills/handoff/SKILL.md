@@ -38,7 +38,7 @@ If you resumed from another handoff you can include those.
 
 **Tasks**
 
-If `TodoWrite` is available, and `TaskList` shows any tasks, regardless of status, include them below. Else, omit this section. 
+If `TaskCreate` is available, and `TaskList` shows any tasks, regardless of status, include them below. Else, omit this section. 
 
 | id | subject | description | status | blocks | blockedBy |
 |----|---------|-------------|--------|--------|-----------|
